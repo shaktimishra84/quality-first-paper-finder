@@ -523,7 +523,15 @@ def paper_identity(paper: dict[str, Any]) -> str:
 def friendly_request_error(exc: requests.RequestException) -> str:
     response = getattr(exc, "response", None)
     if response is not None:
-        return f"HTTP {response.status_code} from source API"
+        detail = ""
+        try:
+            body = (response.text or "").strip()
+            if body:
+                snippet = re.sub(r"\s+", " ", body)[:240]
+                detail = f" — {snippet}"
+        except Exception:
+            detail = ""
+        return f"HTTP {response.status_code} from source API{detail}"
     text = str(exc)
     if "NameResolutionError" in text or "Failed to resolve" in text:
         return "network/DNS unavailable from the app process"
@@ -590,7 +598,7 @@ def _cached_search_pubmed(query: str, retmax: int, email: str, api_key: str) -> 
 
 
 def search_pubmed(query: str, retmax: int, email: str = "", api_key: str = "") -> list[str]:
-    return list(_cached_search_pubmed(query, retmax, email, api_key))
+    return list(_cached_search_pubmed(query, retmax, (email or "").strip(), (api_key or "").strip()))
 
 
 @functools.lru_cache(maxsize=128)
@@ -617,7 +625,7 @@ def fetch_pubmed_records(
 ) -> list[dict[str, Any]]:
     if not pmids:
         return []
-    cached = _cached_fetch_pubmed_records(tuple(pmids), email, api_key)
+    cached = _cached_fetch_pubmed_records(tuple(pmids), (email or "").strip(), (api_key or "").strip())
     return [copy.deepcopy(record) for record in cached]
 
 
