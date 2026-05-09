@@ -113,9 +113,7 @@ DISPLAY_COLUMNS = [
 ]
 
 VISIBLE_COLUMN_ORDER = [
-    "reading_section",
     "tier",
-    "topic_match_gate",
     "total_score",
     "title",
     "journal",
@@ -123,13 +121,6 @@ VISIBLE_COLUMN_ORDER = [
     "study_design",
     "citation_count",
     "url",
-    "why_included",
-    "topic_match_reason",
-    "mandatory_review_reason",
-    "expected_paper_reason",
-    "tier_cap_reason",
-    "gap_suggested",
-    "verification",
 ]
 
 FULL_COLUMNS = [
@@ -611,6 +602,25 @@ def render_paper_detail(row: pd.Series) -> None:
         st.write(abstract)
     else:
         st.caption("No abstract available for this record.")
+
+    diagnostic_bits: list[tuple[str, str]] = []
+    for label, key in [
+        ("Why included", "why_included"),
+        ("Topic gate reason", "topic_match_reason"),
+        ("Landmark/review protection", "mandatory_review_reason"),
+        ("Expected-paper reason", "expected_paper_reason"),
+        ("Tier cap reason", "tier_cap_reason"),
+        ("Gap suggested", "gap_suggested"),
+        ("Verified by", "verification"),
+    ]:
+        value = row.get(key)
+        if value is not None and not pd.isna(value) and str(value).strip():
+            diagnostic_bits.append((label, str(value)))
+    if diagnostic_bits:
+        with st.expander("Scoring diagnostics", expanded=False):
+            for label, value in diagnostic_bits:
+                st.markdown(f"**{label}** — {value}")
+
     link_bits: list[str] = []
     if pmid:
         link_bits.append(f"[PubMed](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)")
