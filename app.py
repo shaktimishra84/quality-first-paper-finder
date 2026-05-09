@@ -113,8 +113,8 @@ DISPLAY_COLUMNS = [
 ]
 
 VISIBLE_COLUMN_ORDER = [
+    "reading_section",
     "tier",
-    "total_score",
     "title",
     "journal",
     "year",
