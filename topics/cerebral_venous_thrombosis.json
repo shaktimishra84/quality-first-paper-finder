@@ -1,0 +1,169 @@
+{
+  "key": "cerebral_venous_thrombosis",
+  "display_name": "Cerebral venous thrombosis",
+  "triggers": [
+    "cerebral venous thrombosis",
+    "cerebral venous sinus thrombosis",
+    "cvt",
+    "cvst",
+    "dural sinus thrombosis",
+    "cortical vein thrombosis"
+  ],
+  "direct_phrases": [
+    "cerebral venous thrombosis",
+    "cerebral venous sinus thrombosis",
+    "cerebral sinus venous thrombosis",
+    "cerebral vein thrombosis",
+    "thrombosis of the cerebral veins and sinuses",
+    "dural sinus thrombosis",
+    "dural venous sinus thrombosis",
+    "cortical vein thrombosis",
+    "intracranial venous thrombosis"
+  ],
+  "direct_acronyms": ["cvt", "cvst"],
+  "acronym_context": [
+    "cerebral",
+    "intracranial",
+    "venous",
+    "sinus",
+    "dural",
+    "cortical",
+    "brain"
+  ],
+  "family_terms": [
+    "venous thromboembolism",
+    "venous thrombosis",
+    "venous thrombotic",
+    "thrombosis"
+  ],
+  "background_terms": [
+    "anticoagulant",
+    "anticoagulation",
+    "heparin",
+    "warfarin",
+    "direct oral anticoagulant",
+    "doac"
+  ],
+  "wrong_terms": [
+    "pulmonary embolism",
+    "arterial thrombosis",
+    "arterial thromboembolism",
+    "deep vein thrombosis",
+    "diabetic ketoacidosis",
+    "pediatric venous thromboembolism",
+    "paediatric venous thromboembolism",
+    "covid-19-associated thrombosis",
+    "covid-19 thrombosis",
+    "covid thrombosis",
+    "thrombosis in covid"
+  ],
+  "pubmed_query": "\"cerebral venous thrombosis\"[Title/Abstract] OR \"cerebral venous sinus thrombosis\"[Title/Abstract] OR \"cerebral sinus venous thrombosis\"[Title/Abstract] OR \"dural sinus thrombosis\"[Title/Abstract] OR \"dural venous sinus thrombosis\"[Title/Abstract] OR \"cortical vein thrombosis\"[Title/Abstract] OR \"intracranial venous thrombosis\"[Title/Abstract] OR CVST[Title/Abstract] OR (CVT[Title/Abstract] AND (cerebral[Title/Abstract] OR venous[Title/Abstract] OR sinus[Title/Abstract] OR dural[Title/Abstract] OR cortical[Title/Abstract]))",
+  "expected_papers": [
+    {
+      "pmid": "38284265",
+      "title": "Diagnosis and Management of Cerebral Venous Thrombosis: A Scientific Statement From the American Heart Association.",
+      "reason": "AHA/Stroke 2024 scientific statement"
+    },
+    {
+      "pmid": "34192432",
+      "title": "Cerebral Venous Thrombosis.",
+      "reason": "NEJM 2021 focused review by Ropper and Klein"
+    },
+    {
+      "pmid": "15858188",
+      "title": "Thrombosis of the cerebral veins and sinuses.",
+      "reason": "NEJM 2005 classic review by Stam"
+    },
+    {
+      "pmid": "29923367",
+      "title": "Cerebral venous sinus thrombosis.",
+      "reason": "Journal of Thrombosis and Haemostasis 2018 review by Capecchi et al."
+    },
+    {
+      "pmid": "39260741",
+      "title": "The changing face of cerebral venous sinus thrombosis-emerging new causes and treatments.",
+      "reason": "Journal of Thrombosis and Haemostasis 2024 update"
+    },
+    {
+      "pmid": "21293023",
+      "title": "Diagnosis and management of cerebral venous thrombosis: a statement for healthcare professionals from the American Heart Association/American Stroke Association.",
+      "reason": "AHA/ASA 2011 statement superseded by the 2024 update but still a classic reference"
+    },
+    {
+      "pmid": "28833980",
+      "title": "European Stroke Organization guideline for the diagnosis and treatment of cerebral venous thrombosis - endorsed by the European Academy of Neurology.",
+      "reason": "European Stroke Organization guideline"
+    },
+    {
+      "pmid": "32958591",
+      "title": "Cerebral venous thrombosis: a practical guide.",
+      "reason": "Practical Neurology review useful for clinical reading"
+    },
+    {
+      "pmid": "32877892",
+      "title": "Cerebral Venous Thrombosis: A Comprehensive Review.",
+      "reason": "Comprehensive review repeatedly visible in PubMed/MedGen related records"
+    },
+    {
+      "pmid": "38050259",
+      "title": "Pathophysiology, diagnosis and management of cerebral venous thrombosis: A comprehensive review.",
+      "reason": "Recent comprehensive review"
+    }
+  ],
+  "gap_subtopics": [
+    {
+      "name": "Pediatric / neonatal CVT",
+      "match_terms": ["pediatric", "paediatric", "neonatal", "neonate", "children", "child ", "infant", "newborn"],
+      "gap_statement": "No pediatric or neonatal CVT evidence was found in the accepted set.",
+      "why_it_matters": "Pediatric CVT differs in etiology, imaging, and outcome and needs age-specific data.",
+      "best_design": "Multicentre pediatric CVT registry or prospective cohort",
+      "feasibility": "Moderate if linked to pediatric stroke networks",
+      "priority": "High"
+    },
+    {
+      "name": "Post-COVID / vaccine-induced CVT (VITT)",
+      "match_terms": ["covid", "sars-cov-2", "vaccine-induced", "vaccine induced", "vitt", "thrombocytopenia"],
+      "gap_statement": "No COVID-19 or vaccine-induced (VITT) CVT evidence was found in the accepted set.",
+      "why_it_matters": "Post-2020 etiologies altered presentation, anticoagulant choice, and prognosis.",
+      "best_design": "Pooled VITT registry analysis or post-COVID CVT cohort",
+      "feasibility": "Moderate",
+      "priority": "High"
+    },
+    {
+      "name": "DOACs vs warfarin in CVT",
+      "match_terms": ["dabigatran", "rivaroxaban", "apixaban", "edoxaban", "doac", "direct oral anticoagulant"],
+      "gap_statement": "No direct DOAC-vs-warfarin evidence for CVT was identified.",
+      "why_it_matters": "DOAC choice is a routine bedside decision; trial-grade evidence in CVT is limited.",
+      "best_design": "Pragmatic randomized trial or propensity-matched registry",
+      "feasibility": "Moderate",
+      "priority": "High"
+    },
+    {
+      "name": "Endovascular treatment of CVT",
+      "match_terms": ["endovascular", "thrombectomy", "thrombolysis", "mechanical aspiration"],
+      "gap_statement": "No endovascular thrombectomy / thrombolysis evidence was found for CVT in the accepted set.",
+      "why_it_matters": "Endovascular treatment is reserved for severe cases; the indications remain debated.",
+      "best_design": "RCT or matched cohort comparing endovascular vs anticoagulation alone",
+      "feasibility": "Moderate",
+      "priority": "Medium"
+    },
+    {
+      "name": "Pregnancy / postpartum CVT",
+      "match_terms": ["pregnancy", "pregnant", "postpartum", "puerperal", "puerperium", "peripartum"],
+      "gap_statement": "No pregnancy or postpartum CVT evidence was found in the accepted set.",
+      "why_it_matters": "Pregnancy is a major CVT trigger and affects anticoagulant selection and duration.",
+      "best_design": "Prospective pregnancy-CVT cohort or case-control study",
+      "feasibility": "Moderate",
+      "priority": "Medium"
+    },
+    {
+      "name": "Long-term outcomes / recurrence",
+      "match_terms": ["long-term", "long term", "follow-up", "follow up", "recurrence", "recurrent", "outcome at"],
+      "gap_statement": "Few or no records addressed long-term CVT outcomes or recurrence rates.",
+      "why_it_matters": "Anticoagulation duration depends on recurrence risk, which is poorly characterized.",
+      "best_design": "Long-term follow-up cohort with standardized outcome adjudication",
+      "feasibility": "Moderate",
+      "priority": "Medium"
+    }
+  ]
+}

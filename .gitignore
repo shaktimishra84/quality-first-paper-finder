@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# macOS resource forks (created on exFAT drives)
+.DS_Store
+._*
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Streamlit local secrets / local config
+.streamlit/secrets.toml
+.streamlit/
+
+# Environment files
+.env
+.env.local
+
+# Local Claude project files
+.claude/
