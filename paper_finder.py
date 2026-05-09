@@ -11,7 +11,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable
@@ -147,7 +147,7 @@ def load_topic_profiles() -> tuple[dict[str, Any], ...]:
         return ()
     profiles: list[dict[str, Any]] = []
     for path in sorted(TOPICS_DIR.glob("*.json")):
-        if path.name.startswith("."):
+        if path.name.startswith(".") or path.name.startswith("_"):
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -156,6 +156,41 @@ def load_topic_profiles() -> tuple[dict[str, Any], ...]:
         if isinstance(data, dict) and data.get("triggers"):
             profiles.append(data)
     return tuple(profiles)
+
+
+@functools.lru_cache(maxsize=1)
+def load_acronyms() -> dict[str, str]:
+    path = TOPICS_DIR / "_acronyms.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(k).lower().strip(): str(v).lower().strip()
+        for k, v in data.items()
+        if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
+    }
+
+
+def expand_acronyms(topic: str) -> str:
+    if not topic:
+        return topic
+    acronyms = load_acronyms()
+    if not acronyms:
+        return topic
+    text = normalize_space(topic).lower()
+    if text in acronyms:
+        return acronyms[text]
+    words = text.split()
+    if not words:
+        return topic
+    expanded_words = [acronyms.get(word, word) for word in words]
+    expanded = " ".join(expanded_words)
+    return expanded if expanded != text else topic
 
 
 def expected_paper_order(profile: dict[str, Any] | None) -> dict[str, int]:
@@ -316,6 +351,11 @@ def run_quality_first_search(
     progress_callback: Callable[[str, int, int], None] | None = None,
     ncbi_api_key: str = "",
 ) -> dict[str, Any]:
+    original_topic = context.topic
+    expanded_topic = expand_acronyms(original_topic)
+    if expanded_topic.strip().lower() != original_topic.strip().lower():
+        context = dataclass_replace(context, topic=expanded_topic)
+
     layers = build_search_layers(context, max_results_per_layer)
     all_papers: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -467,6 +507,9 @@ def run_quality_first_search(
         "missing_from_automatic": missing_from_automatic,
         "manual_google_scholar_notes": manual_google_scholar_notes.strip(),
         "enrichment_limit": enrichment_limit,
+        "topic_used": context.topic,
+        "topic_original": original_topic,
+        "topic_expanded": context.topic if context.topic.strip().lower() != original_topic.strip().lower() else "",
     }
 
 

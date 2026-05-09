@@ -355,8 +355,15 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
     missing_expected = len(result.get("missing_expected", []))
     rejected = len(result.get("rejected_unverified", []))
 
-    profile = topic_profile(topic) if topic else None
+    expanded = result.get("topic_expanded", "")
+    original = result.get("topic_original", topic)
+    effective_topic = result.get("topic_used", topic)
+    profile = topic_profile(effective_topic) if effective_topic else None
     chips: list[str] = []
+    if expanded:
+        chips.append(
+            f'<span class="qf-chip qf-chip-amber">Expanded "{original}" → "{expanded}"</span>'
+        )
     if profile:
         chips.append(
             f'<span class="qf-chip qf-chip-blue">Topic profile: {profile.get("display_name", profile.get("key", ""))}</span>'
