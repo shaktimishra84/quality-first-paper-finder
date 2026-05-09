@@ -1,0 +1,134 @@
+{
+  "key": "ventilator_induced_lung_injury",
+  "display_name": "Ventilator-induced lung injury (VILI)",
+  "triggers": [
+    "ventilator induced lung injury",
+    "ventilator-induced lung injury",
+    "ventilator associated lung injury",
+    "ventilator-associated lung injury",
+    "vili",
+    "vali"
+  ],
+  "direct_phrases": [
+    "ventilator induced lung injury",
+    "ventilator-induced lung injury",
+    "ventilator associated lung injury",
+    "ventilator-associated lung injury",
+    "mechanical ventilation induced lung injury",
+    "mechanical ventilation-induced lung injury",
+    "mechanical-stretch-induced lung injury",
+    "mechanical stretch-induced lung injury",
+    "lung protective ventilation",
+    "lung-protective ventilation",
+    "ventilator-induced",
+    "ventilator induced"
+  ],
+  "direct_acronyms": ["vili", "vali"],
+  "acronym_context": [
+    "ventilator",
+    "ventilation",
+    "ventilatory",
+    "lung",
+    "injury",
+    "ards",
+    "mechanical",
+    "tidal",
+    "pressure",
+    "stretch",
+    "barotrauma",
+    "volutrauma"
+  ],
+  "family_terms": [
+    "acute respiratory distress syndrome",
+    "ards",
+    "acute lung injury",
+    "lung injury",
+    "barotrauma",
+    "volutrauma",
+    "atelectrauma",
+    "biotrauma",
+    "mechanical ventilation",
+    "mechanical power"
+  ],
+  "background_terms": [
+    "tidal volume",
+    "low tidal volume",
+    "peep",
+    "positive end-expiratory pressure",
+    "driving pressure",
+    "plateau pressure",
+    "transpulmonary pressure",
+    "prone position",
+    "prone ventilation",
+    "recruitment maneuver",
+    "open lung",
+    "esophageal pressure",
+    "high-frequency oscillatory ventilation",
+    "hfov"
+  ],
+  "wrong_terms": [],
+  "pubmed_query": "\"ventilator-induced lung injury\"[Title/Abstract] OR \"ventilator induced lung injury\"[Title/Abstract] OR \"ventilator-associated lung injury\"[Title/Abstract] OR \"ventilator associated lung injury\"[Title/Abstract] OR \"mechanical ventilation-induced lung injury\"[Title/Abstract] OR \"Ventilator-Induced Lung Injury\"[MeSH Terms] OR (VILI[Title/Abstract] AND (lung[Title/Abstract] OR ventilation[Title/Abstract] OR ARDS[Title/Abstract] OR mechanical[Title/Abstract])) OR (VALI[Title/Abstract] AND (lung[Title/Abstract] OR ventilation[Title/Abstract] OR ARDS[Title/Abstract] OR mechanical[Title/Abstract]))",
+  "expected_papers": [
+    {
+      "pmid": "24283226",
+      "title": "Ventilator-induced lung injury.",
+      "reason": "NEJM 2013 review by Slutsky and Ranieri — canonical VILI reference"
+    }
+  ],
+  "gap_subtopics": [
+    {
+      "name": "Mechanical power",
+      "match_terms": ["mechanical power"],
+      "gap_statement": "No mechanical-power evidence was identified in the accepted set.",
+      "why_it_matters": "Mechanical power integrates rate, volume, and pressure into a single VILI risk metric increasingly used at the bedside.",
+      "best_design": "Multicentre observational cohort or RCT with mechanical-power titration",
+      "feasibility": "High",
+      "priority": "High"
+    },
+    {
+      "name": "Driving pressure",
+      "match_terms": ["driving pressure", "delta p"],
+      "gap_statement": "No driving-pressure evidence was found in the accepted set.",
+      "why_it_matters": "Driving pressure is the single ventilator parameter most strongly associated with mortality in ARDS (Amato 2015).",
+      "best_design": "Pooled RCT analysis or driving-pressure-targeted RCT",
+      "feasibility": "Moderate",
+      "priority": "High"
+    },
+    {
+      "name": "Prone positioning",
+      "match_terms": ["prone position", "prone ventilation", "proning"],
+      "gap_statement": "No prone-positioning evidence in the accepted set.",
+      "why_it_matters": "Prone positioning reduces VILI by homogenizing ventilation; standard of care in severe ARDS.",
+      "best_design": "Implementation study or pragmatic trial in non-ARDS hypoxemic respiratory failure",
+      "feasibility": "Moderate",
+      "priority": "Medium"
+    },
+    {
+      "name": "P-SILI / spontaneous breathing injury",
+      "match_terms": ["p-sili", "patient self-inflicted", "patient self inflicted", "spontaneous breathing"],
+      "gap_statement": "No P-SILI / spontaneous-breathing injury evidence in the accepted set.",
+      "why_it_matters": "High-effort spontaneous breathing during respiratory failure can drive lung injury independent of the ventilator.",
+      "best_design": "Prospective cohort with esophageal pressure monitoring",
+      "feasibility": "Moderate",
+      "priority": "Medium"
+    },
+    {
+      "name": "Pediatric / neonatal VILI",
+      "match_terms": ["pediatric", "paediatric", "neonatal", "neonate", "children", "infant", "newborn"],
+      "gap_statement": "No pediatric or neonatal VILI evidence in the accepted set.",
+      "why_it_matters": "Pediatric and neonatal lungs respond differently to mechanical ventilation; PARDS guidelines diverge from adult.",
+      "best_design": "Pediatric ARDS network cohort or PARDS-specific trial",
+      "feasibility": "Moderate",
+      "priority": "Medium"
+    },
+    {
+      "name": "Lung rest on ECMO",
+      "match_terms": ["ecmo", "extracorporeal membrane oxygenation", "lung rest"],
+      "gap_statement": "No ECMO-related VILI / lung-rest evidence in the accepted set.",
+      "why_it_matters": "On ECMO, ventilation can be ultra-protective; optimal rest settings remain debated.",
+      "best_design": "ECMO registry analysis or trial comparing rest strategies",
+      "feasibility": "Moderate",
+      "priority": "Low"
+    }
+  ]
+}
