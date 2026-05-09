@@ -528,6 +528,18 @@ def friendly_request_error(exc: requests.RequestException) -> str:
             body = (response.text or "").strip()
             if body:
                 snippet = re.sub(r"\s+", " ", body)[:240]
+                snippet = re.sub(
+                    r'("api[-_]?key"\s*:\s*")([^"]+)(")',
+                    r"\1[redacted]\3",
+                    snippet,
+                    flags=re.IGNORECASE,
+                )
+                snippet = re.sub(
+                    r'(api[-_]?key=)([^&\s"]+)',
+                    r"\1[redacted]",
+                    snippet,
+                    flags=re.IGNORECASE,
+                )
                 detail = f" — {snippet}"
         except Exception:
             detail = ""
