@@ -220,6 +220,23 @@ def main() -> None:
                     comparator = st.text_input("Comparator", placeholder="Placebo or usual care")
                 with adv_col_2:
                     email = st.text_input("NCBI email", placeholder="Optional")
+                    secret_api_key = ""
+                    try:
+                        secret_api_key = str(st.secrets.get("ncbi_api_key", "") or "")
+                    except (FileNotFoundError, AttributeError):
+                        secret_api_key = ""
+                    api_key_help = (
+                        "Loaded from app secrets (st.secrets['ncbi_api_key'])."
+                        if secret_api_key
+                        else "Optional. Free at ncbi.nlm.nih.gov/account; raises rate limit 3→10 req/s."
+                    )
+                    api_key_field = st.text_input(
+                        "NCBI API key",
+                        placeholder="Loaded from app secrets" if secret_api_key else "Optional",
+                        type="password",
+                        help=api_key_help,
+                    )
+                    ncbi_api_key = (api_key_field or secret_api_key or "").strip()
                     enrichment_limit = st.slider("Citation enrichment limit", 0, 150, 100, step=10)
                 with adv_col_3:
                     use_openalex = st.checkbox("OpenAlex citations", value=True)
@@ -268,6 +285,7 @@ def main() -> None:
                 quartile_overrides=quartile_overrides,
                 manual_google_scholar_notes=google_notes,
                 progress_callback=report_progress,
+                ncbi_api_key=ncbi_api_key,
             )
             status.update(
                 label=f"Done — {len(result['papers'])} papers admitted",

@@ -314,6 +314,7 @@ def run_quality_first_search(
     quartile_overrides: dict[str, dict[str, str]] | None = None,
     manual_google_scholar_notes: str = "",
     progress_callback: Callable[[str, int, int], None] | None = None,
+    ncbi_api_key: str = "",
 ) -> dict[str, Any]:
     layers = build_search_layers(context, max_results_per_layer)
     all_papers: list[dict[str, Any]] = []
@@ -331,8 +332,13 @@ def run_quality_first_search(
 
     def _fetch_layer(layer: SearchLayer) -> tuple[SearchLayer, list[str], list[dict[str, Any]], str | None]:
         try:
-            ids = search_pubmed(layer.query, layer.retmax or max_results_per_layer, email=email)
-            papers = fetch_pubmed_records(ids, email=email) if ids else []
+            ids = search_pubmed(
+                layer.query,
+                layer.retmax or max_results_per_layer,
+                email=email,
+                api_key=ncbi_api_key,
+            )
+            papers = fetch_pubmed_records(ids, email=email, api_key=ncbi_api_key) if ids else []
             for paper in papers:
                 paper["search_layers"] = [layer.name]
                 paper["search_origin"] = "PubMed"
@@ -345,8 +351,9 @@ def run_quality_first_search(
 
     total_layers = len(layers)
     completed_layers = 0
+    layer_workers = 4 if ncbi_api_key.strip() else 2
     _notify(f"Starting {total_layers} parallel PubMed searches", 0, total_layers)
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=layer_workers) as executor:
         futures = [executor.submit(_fetch_layer, layer) for layer in layers]
         for future in as_completed(futures):
             layer, ids, papers, error = future.result()
@@ -564,7 +571,7 @@ def _pubmed_get(url: str, params: dict[str, str], max_retries: int = 4) -> reque
 
 
 @functools.lru_cache(maxsize=256)
-def _cached_search_pubmed(query: str, retmax: int, email: str) -> tuple[str, ...]:
+def _cached_search_pubmed(query: str, retmax: int, email: str, api_key: str) -> tuple[str, ...]:
     params = {
         "db": "pubmed",
         "term": query,
@@ -575,18 +582,20 @@ def _cached_search_pubmed(query: str, retmax: int, email: str) -> tuple[str, ...
     }
     if email:
         params["email"] = email
+    if api_key:
+        params["api_key"] = api_key
     response = _pubmed_get(PUBMED_SEARCH_URL, params)
     payload = response.json()
     return tuple(payload.get("esearchresult", {}).get("idlist", []))
 
 
-def search_pubmed(query: str, retmax: int, email: str = "") -> list[str]:
-    return list(_cached_search_pubmed(query, retmax, email))
+def search_pubmed(query: str, retmax: int, email: str = "", api_key: str = "") -> list[str]:
+    return list(_cached_search_pubmed(query, retmax, email, api_key))
 
 
 @functools.lru_cache(maxsize=128)
 def _cached_fetch_pubmed_records(
-    pmids_key: tuple[str, ...], email: str
+    pmids_key: tuple[str, ...], email: str, api_key: str
 ) -> tuple[dict[str, Any], ...]:
     params = {
         "db": "pubmed",
@@ -596,15 +605,19 @@ def _cached_fetch_pubmed_records(
     }
     if email:
         params["email"] = email
+    if api_key:
+        params["api_key"] = api_key
     response = _pubmed_get(PUBMED_FETCH_URL, params)
     root = ET.fromstring(response.text)
     return tuple(parse_pubmed_article(node) for node in root.findall(".//PubmedArticle"))
 
 
-def fetch_pubmed_records(pmids: list[str], email: str = "") -> list[dict[str, Any]]:
+def fetch_pubmed_records(
+    pmids: list[str], email: str = "", api_key: str = ""
+) -> list[dict[str, Any]]:
     if not pmids:
         return []
-    cached = _cached_fetch_pubmed_records(tuple(pmids), email)
+    cached = _cached_fetch_pubmed_records(tuple(pmids), email, api_key)
     return [copy.deepcopy(record) for record in cached]
 
 
