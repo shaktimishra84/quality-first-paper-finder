@@ -223,7 +223,7 @@ def main() -> None:
                     secret_api_key = ""
                     try:
                         secret_api_key = str(st.secrets.get("ncbi_api_key", "") or "")
-                    except (FileNotFoundError, AttributeError):
+                    except Exception:
                         secret_api_key = ""
                     api_key_help = (
                         "Loaded from app secrets (st.secrets['ncbi_api_key'])."
