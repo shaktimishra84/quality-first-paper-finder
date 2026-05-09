@@ -346,7 +346,7 @@ def run_quality_first_search(
     total_layers = len(layers)
     completed_layers = 0
     _notify(f"Starting {total_layers} parallel PubMed searches", 0, total_layers)
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(_fetch_layer, layer) for layer in layers]
         for future in as_completed(futures):
             layer, ids, papers, error = future.result()
@@ -527,6 +527,42 @@ def friendly_request_error(exc: requests.RequestException) -> str:
     return text[:240]
 
 
+def _pubmed_get(url: str, params: dict[str, str], max_retries: int = 4) -> requests.Response:
+    delay = 0.8
+    last_exc: requests.RequestException | None = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=DEFAULT_HEADERS,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+            continue
+        if response.status_code in (429, 500, 502, 503, 504):
+            if attempt == max_retries - 1:
+                response.raise_for_status()
+            retry_after = response.headers.get("Retry-After")
+            try:
+                wait = float(retry_after) if retry_after else delay
+            except ValueError:
+                wait = delay
+            time.sleep(min(wait, 8.0))
+            delay *= 2
+            continue
+        response.raise_for_status()
+        return response
+    if last_exc:
+        raise last_exc
+    raise requests.RequestException("PubMed request failed without response")
+
+
 @functools.lru_cache(maxsize=256)
 def _cached_search_pubmed(query: str, retmax: int, email: str) -> tuple[str, ...]:
     params = {
@@ -539,13 +575,7 @@ def _cached_search_pubmed(query: str, retmax: int, email: str) -> tuple[str, ...
     }
     if email:
         params["email"] = email
-    response = requests.get(
-        PUBMED_SEARCH_URL,
-        params=params,
-        headers=DEFAULT_HEADERS,
-        timeout=REQUEST_TIMEOUT,
-    )
-    response.raise_for_status()
+    response = _pubmed_get(PUBMED_SEARCH_URL, params)
     payload = response.json()
     return tuple(payload.get("esearchresult", {}).get("idlist", []))
 
@@ -566,13 +596,7 @@ def _cached_fetch_pubmed_records(
     }
     if email:
         params["email"] = email
-    response = requests.get(
-        PUBMED_FETCH_URL,
-        params=params,
-        headers=DEFAULT_HEADERS,
-        timeout=REQUEST_TIMEOUT,
-    )
-    response.raise_for_status()
+    response = _pubmed_get(PUBMED_FETCH_URL, params)
     root = ET.fromstring(response.text)
     return tuple(parse_pubmed_article(node) for node in root.findall(".//PubmedArticle"))
 
