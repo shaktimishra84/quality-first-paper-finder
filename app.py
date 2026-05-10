@@ -202,7 +202,7 @@ def main() -> None:
             with quick_col_3:
                 outcome = st.text_input("Outcome", placeholder="Mortality, recurrence")
             with quick_col_4:
-                max_results = st.slider("Candidate depth", 25, 100, 50, step=5)
+                max_results = st.slider("Candidate depth", 25, 200, 100, step=5)
 
             with st.expander("Advanced", expanded=False):
                 adv_col_1, adv_col_2, adv_col_3 = st.columns(3)
