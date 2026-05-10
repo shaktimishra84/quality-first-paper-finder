@@ -1752,22 +1752,16 @@ def quality_data_cap(paper: dict[str, Any]) -> tuple[int, str]:
 def assign_reading_section(paper: dict[str, Any]) -> str:
     topic_level = paper.get("topic_match_level", "")
     tier_order = TIER_ORDER.get(paper.get("tier", ""), 5)
-    design = paper.get("study_design", "")
-    major_design = design in {
-        "Guideline / consensus / society statement",
-        "Systematic review / meta-analysis",
-        "Randomized controlled trial",
-        "Large multicentre prospective cohort",
-        "Diagnostic accuracy study",
-    }
 
     if paper.get("mandatory_review_candidate") or paper.get("expected_paper_reason"):
         return "Core reading pack"
-    if topic_level in {"background", "noise"} or tier_order >= 4:
+    if topic_level in {"noise"}:
         return "Low-priority / indirect papers"
-    if topic_level in {"direct", "abstract_only"} and major_design and tier_order <= 3:
+    if topic_level in {"direct", "abstract_only"} and tier_order <= 3:
         return "Core reading pack"
-    return "Extended evidence base"
+    if topic_level in {"direct", "abstract_only", "partial"}:
+        return "Extended evidence base"
+    return "Low-priority / indirect papers"
 
 
 def classify_evidence_group(paper: dict[str, Any], design: str) -> str:

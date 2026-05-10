@@ -320,13 +320,13 @@ def main() -> None:
     )
 
     with tabs[0]:
-        core_df = section_rows(df, "Core reading pack", DISPLAY_COLUMNS, limit=25)
-        st.caption("Guidelines, landmark reviews, major studies, and recent focused updates. Click a row to see its abstract.")
-        render_paper_table(core_df, "No core reading-pack papers were admitted.", full_df=full_df, key="tbl_core")
+        core_df = section_rows(df, "Core reading pack", DISPLAY_COLUMNS, limit=300)
+        st.caption(f"All on-topic papers Tier 1–3 (incl. landmark / expected-paper protected). Filter by tier below. {len(core_df)} papers.")
+        render_paper_table(core_df, "No core reading-pack papers were admitted.", full_df=full_df, tier_filter=True, key="tbl_core")
 
     with tabs[1]:
-        evidence_df = relevant_rows(df, DISPLAY_COLUMNS, limit=100)
-        st.caption("All relevant direct, abstract-only, and disease-family papers after deduplication. Click a row to see its abstract.")
+        evidence_df = relevant_rows(df, DISPLAY_COLUMNS, limit=400)
+        st.caption(f"On-topic Tier 4 plus partial-match papers. Use these to widen scope. {len(evidence_df)} papers.")
         render_paper_table(evidence_df, "No extended evidence-base papers were admitted.", full_df=full_df, tier_filter=True, key="tbl_evidence")
 
     with tabs[2]:
@@ -758,10 +758,10 @@ def section_rows(
     return safe_columns(rows, columns)
 
 
-def relevant_rows(df: pd.DataFrame, columns: list[str], limit: int = 100) -> pd.DataFrame:
+def relevant_rows(df: pd.DataFrame, columns: list[str], limit: int = 400) -> pd.DataFrame:
     if df.empty or "reading_section" not in df.columns:
         return pd.DataFrame(columns=columns)
-    rows = df[df["reading_section"] != "Low-priority / indirect papers"].head(limit)
+    rows = df[df["reading_section"] == "Extended evidence base"].head(limit)
     return safe_columns(rows, columns)
 
 
