@@ -24,6 +24,10 @@ TOPICS_DIR = Path(__file__).resolve().parent / "topics"
 
 PUBMED_SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_FETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+MESH_SEARCH_URL = PUBMED_SEARCH_URL  # same endpoint, db=mesh
+MESH_FETCH_URL = PUBMED_FETCH_URL
+MESH_MAX_DESCRIPTORS = 8
+MESH_MAX_QUERY_CLAUSES = 40
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper"
 
@@ -231,9 +235,14 @@ class SearchLayer:
     retmax: int | None = None
 
 
-def build_search_layers(context: SearchContext, candidate_depth: int = 50) -> list[SearchLayer]:
+def build_search_layers(
+    context: SearchContext,
+    candidate_depth: int = 50,
+    email: str = "",
+    api_key: str = "",
+) -> list[SearchLayer]:
     topic = context.topic.strip()
-    topic_query = build_topic_query(topic)
+    topic_query = build_topic_query(topic, email=email, api_key=api_key)
     recent_start_year = max(1900, context.current_year - 2)
     ico_clause = (
         '"intensive care units"[MeSH Terms] OR "critical care"[MeSH Terms] '
@@ -332,10 +341,25 @@ def build_search_layers(context: SearchContext, candidate_depth: int = 50) -> li
     ]
 
 
-def build_topic_query(topic: str) -> str:
+def build_topic_query(topic: str, email: str = "", api_key: str = "") -> str:
     profile = topic_profile(topic)
-    if profile and profile.get("pubmed_query"):
-        return str(profile["pubmed_query"])
+    profile_query = str(profile.get("pubmed_query", "")).strip() if profile else ""
+
+    mesh_records = discover_mesh(topic, email=email, api_key=api_key)
+    mesh_clauses = mesh_query_clauses(mesh_records)
+    mesh_query = " OR ".join(mesh_clauses)
+
+    parts: list[str] = []
+    if profile_query:
+        parts.append(f"({profile_query})")
+    if mesh_query:
+        parts.append(f"({mesh_query})")
+    if parts:
+        return " OR ".join(parts)
+
+    translation = pubmed_translation(topic, email=email, api_key=api_key)
+    if translation:
+        return translation
     return topic
 
 
@@ -356,7 +380,13 @@ def run_quality_first_search(
     if expanded_topic.strip().lower() != original_topic.strip().lower():
         context = dataclass_replace(context, topic=expanded_topic)
 
-    layers = build_search_layers(context, max_results_per_layer)
+    layers = build_search_layers(
+        context,
+        max_results_per_layer,
+        email=email,
+        api_key=ncbi_api_key,
+    )
+    discovered_mesh = discover_mesh(context.topic, email=email, api_key=ncbi_api_key)
     all_papers: list[dict[str, Any]] = []
     errors: list[str] = []
     automatically_retrieved_pmids: set[str] = set()
@@ -510,6 +540,7 @@ def run_quality_first_search(
         "topic_used": context.topic,
         "topic_original": original_topic,
         "topic_expanded": context.topic if context.topic.strip().lower() != original_topic.strip().lower() else "",
+        "mesh_discovered": discovered_mesh,
     }
 
 
@@ -687,6 +718,185 @@ def fetch_pubmed_records(
 def clear_pubmed_caches() -> None:
     _cached_search_pubmed.cache_clear()
     _cached_fetch_pubmed_records.cache_clear()
+    _cached_discover_mesh.cache_clear()
+    _cached_pubmed_translation.cache_clear()
+
+
+@functools.lru_cache(maxsize=128)
+def _cached_pubmed_translation(topic: str, email: str, api_key: str) -> str:
+    topic = (topic or "").strip()
+    if not topic:
+        return ""
+    params = {
+        "db": "pubmed",
+        "term": topic,
+        "retmode": "json",
+        "retmax": "0",
+        "tool": "quality_first_paper_finder",
+    }
+    if email:
+        params["email"] = email
+    if api_key:
+        params["api_key"] = api_key
+    try:
+        response = _pubmed_get(PUBMED_SEARCH_URL, params)
+        return str(response.json().get("esearchresult", {}).get("querytranslation", "")).strip()
+    except (requests.RequestException, ValueError):
+        return ""
+
+
+def pubmed_translation(topic: str, email: str = "", api_key: str = "") -> str:
+    return _cached_pubmed_translation(
+        (topic or "").strip(), (email or "").strip(), (api_key or "").strip()
+    )
+
+
+@functools.lru_cache(maxsize=128)
+def _cached_discover_mesh(topic: str, email: str, api_key: str) -> tuple[dict[str, Any], ...]:
+    topic = (topic or "").strip()
+    if not topic:
+        return ()
+    search_params = {
+        "db": "mesh",
+        "term": topic,
+        "retmode": "json",
+        "retmax": str(MESH_MAX_DESCRIPTORS),
+        "tool": "quality_first_paper_finder",
+    }
+    if email:
+        search_params["email"] = email
+    if api_key:
+        search_params["api_key"] = api_key
+    try:
+        response = _pubmed_get(MESH_SEARCH_URL, search_params)
+        uids = response.json().get("esearchresult", {}).get("idlist", [])
+    except (requests.RequestException, ValueError):
+        return ()
+    if not uids:
+        return ()
+
+    fetch_params = {
+        "db": "mesh",
+        "id": ",".join(uids[:MESH_MAX_DESCRIPTORS]),
+        "rettype": "full",
+        "retmode": "text",
+        "tool": "quality_first_paper_finder",
+    }
+    if email:
+        fetch_params["email"] = email
+    if api_key:
+        fetch_params["api_key"] = api_key
+    try:
+        response = _pubmed_get(MESH_FETCH_URL, fetch_params)
+    except requests.RequestException:
+        return ()
+    return tuple(_parse_mesh_text(response.text))
+
+
+def discover_mesh(topic: str, email: str = "", api_key: str = "") -> list[dict[str, Any]]:
+    raw_records = [
+        copy.deepcopy(record)
+        for record in _cached_discover_mesh(
+            (topic or "").strip(), (email or "").strip(), (api_key or "").strip()
+        )
+    ]
+    return _rank_mesh_records(raw_records, topic)
+
+
+_MESH_FIELD_HEADER_RE = re.compile(r"^[A-Z][A-Za-z0-9 ()/-]{2,}:\s*$")
+
+
+def _parse_mesh_text(text: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    in_entry_terms = False
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        new_record_match = re.match(r"^\d+:\s+(.+)$", line)
+        if new_record_match:
+            if current and current.get("descriptor"):
+                records.append(current)
+            current = {
+                "descriptor": new_record_match.group(1).strip(),
+                "ui": "",
+                "tree_numbers": [],
+                "entry_terms": [],
+            }
+            in_entry_terms = False
+            continue
+        if current is None:
+            continue
+
+        if line.startswith("MeSH Unique ID:"):
+            current["ui"] = line.split(":", 1)[1].strip()
+            in_entry_terms = False
+            continue
+        if line.startswith("Tree Number(s):"):
+            tn_str = line.split(":", 1)[1].strip()
+            current["tree_numbers"] = [t.strip() for t in tn_str.split(",") if t.strip()]
+            in_entry_terms = False
+            continue
+        if re.match(r"^Entry Terms?:?\s*$", line, flags=re.IGNORECASE):
+            in_entry_terms = True
+            continue
+
+        if in_entry_terms:
+            indented = line.startswith((" ", "\t"))
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if not indented or _MESH_FIELD_HEADER_RE.match(stripped):
+                in_entry_terms = False
+                continue
+            current["entry_terms"].append(stripped)
+
+    if current and current.get("descriptor"):
+        records.append(current)
+    return records
+
+
+def _rank_mesh_records(
+    records: list[dict[str, Any]], topic: str
+) -> list[dict[str, Any]]:
+    topic_lower = (topic or "").strip().lower()
+
+    def sort_key(record: dict[str, Any]) -> tuple[int, int, str]:
+        name = (record.get("descriptor") or "").strip().lower()
+        if not topic_lower:
+            return (3, 0, name)
+        if name == topic_lower:
+            tier = 0
+        elif name.startswith(topic_lower) or topic_lower in name:
+            tier = 1
+        elif any(topic_lower == term.strip().lower() for term in record.get("entry_terms", [])):
+            tier = 1
+        else:
+            tier = 2
+        # within a tier, prefer shorter (more specific) names
+        return (tier, len(name), name)
+
+    return sorted(records, key=sort_key)
+
+
+def mesh_query_clauses(records: list[dict[str, Any]]) -> list[str]:
+    clauses: list[str] = []
+    seen: set[str] = set()
+    for record in records:
+        descriptor = (record.get("descriptor") or "").strip()
+        if descriptor and descriptor.lower() not in seen:
+            clauses.append(f'"{descriptor}"[Mesh]')
+            clauses.append(f'"{descriptor}"[tw]')
+            seen.add(descriptor.lower())
+        for term in record.get("entry_terms", []):
+            normalized = (term or "").strip()
+            if normalized and normalized.lower() not in seen:
+                clauses.append(f'"{normalized}"[tw]')
+                seen.add(normalized.lower())
+                if len(clauses) >= MESH_MAX_QUERY_CLAUSES:
+                    return clauses
+        if len(clauses) >= MESH_MAX_QUERY_CLAUSES:
+            return clauses
+    return clauses
 
 
 def parse_pubmed_article(node: ET.Element) -> dict[str, Any]:

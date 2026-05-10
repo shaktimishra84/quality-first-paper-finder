@@ -380,6 +380,21 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
             )
     else:
         chips.append('<span class="qf-chip qf-chip-muted">Generic topic — no profile loaded</span>')
+
+    mesh_records = result.get("mesh_discovered", []) or []
+    if mesh_records:
+        descriptor_names = [
+            (record.get("descriptor") or "").strip()
+            for record in mesh_records
+            if (record.get("descriptor") or "").strip()
+        ]
+        synonym_total = sum(len(record.get("entry_terms", []) or []) for record in mesh_records)
+        if descriptor_names:
+            head = ", ".join(descriptor_names[:3])
+            tail = "" if len(descriptor_names) <= 3 else f" +{len(descriptor_names) - 3} more"
+            chips.append(
+                f'<span class="qf-chip qf-chip-green">MeSH: {head}{tail} ({synonym_total} synonyms)</span>'
+            )
     st.markdown("".join(chips), unsafe_allow_html=True)
 
     funnel_col, reading_col = st.columns([3, 2])
