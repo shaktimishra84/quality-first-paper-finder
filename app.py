@@ -182,35 +182,44 @@ def main() -> None:
         with st.form("search_form"):
             topic = st.text_area(
                 "Research topic or question",
-                placeholder="Example: cerebral venous thrombosis",
+                placeholder="Example: cerebral venous thrombosis · vili · sepsis",
                 height=74,
             )
-            quick_col_1, quick_col_2, quick_col_3, quick_col_4 = st.columns([1.4, 1, 1, 0.75])
-            with quick_col_1:
-                question_type = st.selectbox(
-                    "Question type",
-                    [
-                        "General evidence map",
-                        "Intervention or treatment",
-                        "Diagnosis",
-                        "Prognosis or prediction",
-                        "Implementation or cost",
-                    ],
-                )
-            with quick_col_2:
-                population = st.text_input("Population", placeholder="Adults, ICU, pregnancy")
-            with quick_col_3:
-                outcome = st.text_input("Outcome", placeholder="Mortality, recurrence")
-            with quick_col_4:
-                max_results = st.slider("Candidate depth", 25, 200, 100, step=5)
+            max_results = st.slider(
+                "Candidate depth",
+                min_value=25,
+                max_value=200,
+                value=100,
+                step=5,
+                help="Maximum candidates pulled per search layer (6 layers run in parallel).",
+            )
 
-            with st.expander("Advanced", expanded=False):
-                adv_col_1, adv_col_2, adv_col_3 = st.columns(3)
-                with adv_col_1:
+            with st.expander("Advanced — PICO, infrastructure, enrichment", expanded=False):
+                pico_col_1, pico_col_2, pico_col_3 = st.columns(3)
+                with pico_col_1:
+                    question_type = st.selectbox(
+                        "Question type",
+                        [
+                            "General evidence map",
+                            "Intervention or treatment",
+                            "Diagnosis",
+                            "Prognosis or prediction",
+                            "Implementation or cost",
+                        ],
+                    )
+                    population = st.text_input("Population", placeholder="Adults, ICU, pregnancy")
+                with pico_col_2:
                     intervention = st.text_input("Intervention or exposure", placeholder="Hydrocortisone")
                     comparator = st.text_input("Comparator", placeholder="Placebo or usual care")
-                with adv_col_2:
+                with pico_col_3:
+                    outcome = st.text_input("Outcome", placeholder="Mortality, recurrence")
+
+                st.markdown("---")
+
+                infra_col_1, infra_col_2, infra_col_3 = st.columns(3)
+                with infra_col_1:
                     email = st.text_input("NCBI email", placeholder="Optional")
+                with infra_col_2:
                     secret_api_key = ""
                     try:
                         secret_api_key = str(st.secrets.get("ncbi_api_key", "") or "")
@@ -228,15 +237,21 @@ def main() -> None:
                         help=api_key_help,
                     )
                     ncbi_api_key = (api_key_field or secret_api_key or "").strip()
+                with infra_col_3:
                     enrichment_limit = st.slider("Citation enrichment limit", 0, 150, 100, step=10)
-                with adv_col_3:
+
+                enrich_col_1, enrich_col_2, enrich_col_3 = st.columns(3)
+                with enrich_col_1:
                     use_openalex = st.checkbox("OpenAlex citations", value=True)
+                with enrich_col_2:
                     use_semantic = st.checkbox("Semantic Scholar check", value=False)
+                with enrich_col_3:
                     quartile_file = st.file_uploader(
                         "Journal quartile CSV",
                         type=["csv"],
                         help="Optional columns: journal, quartile, quartile_source.",
                     )
+
                 google_notes = st.text_area(
                     "Manual Google Scholar notes",
                     placeholder="Use only for cross-checking landmark or cited-by observations.",
