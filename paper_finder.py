@@ -128,7 +128,8 @@ DATABASE_TERMS = [
     "national inpatient sample",
 ]
 
-JOURNAL_SCORE = {"Q1": 20, "Q2": 15, "Q3": 6, "Q4": 2}
+JOURNAL_SCORE = {"Q1": 12, "Q2": 9, "Q3": 4, "Q4": 1}
+JOURNAL_MAJOR_BONUS = 5
 TIER_ORDER = {
     "Tier 1: Must-read": 1,
     "Tier 2: Useful supporting": 2,
@@ -1149,6 +1150,100 @@ def enrich_with_semantic_scholar(paper: dict[str, Any]) -> None:
             paper["citation_source"] = "Semantic Scholar"
 
 
+def apply_topic_penalties(
+    paper: dict[str, Any],
+    context: SearchContext,
+) -> tuple[int, list[str]]:
+    profile = topic_profile(context.topic)
+    text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    penalty_total = 0
+    penalty_notes: list[str] = []
+
+    if profile:
+        for entry in profile.get("penalize", []):
+            terms = [str(t).lower() for t in entry.get("match_terms", []) if t]
+            if not terms:
+                continue
+            if any(term in text for term in terms):
+                score = int(entry.get("score", 0))
+                penalty_total += score
+                reason = str(entry.get("reason") or entry.get("name") or "topic-profile penalty")
+                penalty_notes.append(f"{reason} ({score:+d})")
+
+    if not (paper.get("abstract") or "").strip():
+        penalty_total -= 5
+        penalty_notes.append("Missing abstract (-5)")
+
+    return penalty_total, penalty_notes
+
+
+def must_include_boost(paper: dict[str, Any], context: SearchContext) -> tuple[int, list[str]]:
+    profile = topic_profile(context.topic)
+    if not profile:
+        return 0, []
+    concepts = [str(c).lower() for c in profile.get("must_include_concepts", []) if c]
+    if not concepts:
+        return 0, []
+    text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    matched = [c for c in concepts if c in text]
+    if not matched:
+        return 0, []
+    bonus = min(6, len(matched) * 2)
+    return bonus, matched
+
+
+def ranking_confidence_for(paper: dict[str, Any]) -> str:
+    citation_known = paper.get("citation_count") is not None
+    quartile_known = paper.get("quartile") not in (None, "", "quartile not verified")
+    abstract_present = bool((paper.get("abstract") or "").strip())
+    expected_seed = bool(paper.get("expected_paper_reason"))
+
+    if expected_seed:
+        return "high"
+    if citation_known and quartile_known and abstract_present:
+        return "high"
+    if (citation_known or quartile_known) and abstract_present:
+        return "moderate"
+    return "low"
+
+
+def reason_for_tier(paper: dict[str, Any]) -> str:
+    tier = paper.get("tier", "")
+    bits: list[str] = []
+
+    expected_reason = paper.get("expected_paper_reason")
+    if expected_reason:
+        bits.append(f"seeded landmark — {expected_reason}")
+
+    if paper.get("mandatory_review_candidate"):
+        protection = paper.get("mandatory_review_reason", "landmark / review protection")
+        if protection:
+            bits.append(protection)
+
+    design = paper.get("study_design", "")
+    if design:
+        bits.append(f"design: {design}")
+
+    journal = paper.get("journal", "")
+    if journal:
+        bits.append(f"journal: {journal}")
+
+    citation_count = paper.get("citation_count")
+    if citation_count is not None:
+        bits.append(f"{int(citation_count)} citations")
+
+    total = paper.get("total_score")
+    if total is not None:
+        bits.append(f"final score {int(total)}")
+
+    penalty_notes = paper.get("penalty_notes", [])
+    if penalty_notes:
+        bits.append("penalties: " + "; ".join(penalty_notes))
+
+    head = f"{tier} because " if tier else ""
+    return head + "; ".join(bits) if bits else tier
+
+
 def score_and_classify_paper(
     paper: dict[str, Any],
     context: SearchContext,
@@ -1170,11 +1265,20 @@ def score_and_classify_paper(
         relevance_reason += "; Rule 0 direct topic gate raised relevance floor"
     relevance_score = min(raw_relevance_score, topic_gate["relevance_cap"])
     design, design_score = classify_design(paper, context)
-    journal_score = score_journal_quality(paper["quartile"])
+    journal_score = score_journal_quality(paper["quartile"], paper.get("journal", ""))
     citation_score, citation_note = score_citations(paper.get("citation_count"))
     recency_score = score_recency(paper.get("year"), context.current_year)
 
-    total_score = relevance_score + design_score + journal_score + citation_score + recency_score
+    concept_bonus, matched_concepts = must_include_boost(paper, context)
+    if concept_bonus:
+        relevance_score = min(40, relevance_score + concept_bonus)
+        relevance_reason += f"; +{concept_bonus} for must-include concepts: {', '.join(matched_concepts)}"
+
+    paper["quartile"] = paper.get("quartile", "")
+    penalty_score, penalty_notes = apply_topic_penalties(paper, context)
+
+    base_total = relevance_score + design_score + journal_score + citation_score + recency_score
+    total_score = max(0, base_total + penalty_score)
 
     paper["topic_match_gate"] = topic_gate["gate"]
     paper["topic_match_level"] = topic_gate["level"]
@@ -1182,25 +1286,36 @@ def score_and_classify_paper(
     paper["topic_match_max_tier"] = topic_gate["max_tier_label"]
     paper["raw_relevance_score"] = raw_relevance_score
     paper["relevance_score"] = relevance_score
+    paper["clinical_relevance_score"] = relevance_score
     paper["relevance_cap"] = topic_gate["relevance_cap"]
+    paper["design_strength_score"] = design_score
     paper["study_design_score"] = design_score
     paper["journal_quality_score"] = journal_score
+    paper["citation_score"] = citation_score
     paper["citation_strength_score"] = citation_score
     paper["recency_score"] = recency_score
+    paper["penalty_score"] = penalty_score
+    paper["penalty_notes"] = penalty_notes
+    paper["base_score"] = base_total
     paper["total_score"] = total_score
+    paper["final_score"] = total_score
     paper["study_design"] = design
     paper["citation_note"] = citation_note
+    paper["citation_count_missing"] = paper.get("citation_count") is None
     paper["relevance_reason"] = relevance_reason
     paper["recent_high_quality_note"] = recent_high_quality_note(paper, design, citation_score, context)
     review_protection = major_review_protection(paper, design, context)
     paper["mandatory_review_candidate"] = review_protection["candidate"]
     paper["mandatory_review_reason"] = review_protection["reason"]
+    paper["landmark_seed_match"] = bool(paper.get("expected_paper_reason"))
     paper["score_only_tier"] = assign_tier(paper)
     paper["tier"], paper["tier_cap_reason"] = apply_tier_caps(
         paper,
         paper["score_only_tier"],
         topic_gate["max_tier_order"],
     )
+    paper["normalized_title"] = normalize_title(paper.get("title", ""))
+    paper["publication_type"] = ", ".join(paper.get("publication_types", []))
     paper["evidence_group"] = classify_evidence_group(paper, design)
     paper["knowledge_roles"] = classify_knowledge_roles(paper, design, context)
     paper["tags"] = build_tags(paper, design, context)
@@ -1209,6 +1324,8 @@ def score_and_classify_paper(
     paper["gap_suggested"] = suggest_paper_gap(paper, context)
     paper["evidence_family"] = evidence_family(paper)
     paper["reading_section"] = assign_reading_section(paper)
+    paper["ranking_confidence"] = ranking_confidence_for(paper)
+    paper["reason_for_tier"] = reason_for_tier(paper)
     paper["search_layers"] = ", ".join(paper.get("search_layers", []))
     paper["publication_types"] = ", ".join(paper.get("publication_types", []))
     return paper
@@ -1230,6 +1347,7 @@ def major_review_protection(
         "Guideline / consensus / society statement",
         "Systematic review / meta-analysis",
         "Narrative review",
+        "Landmark physiological review",
     }
     major_journal = any(term in journal for term in MAJOR_JOURNAL_TERMS)
     title_signal = has_any(
@@ -1290,7 +1408,11 @@ def major_review_protection(
         reasons.append("clearly focused review/update title")
 
     high_confidence_review = (
-        design in {"Guideline / consensus / society statement", "Systematic review / meta-analysis"}
+        design in {
+            "Guideline / consensus / society statement",
+            "Systematic review / meta-analysis",
+            "Landmark physiological review",
+        }
         or bool(paper.get("expected_paper_reason"))
         or major_journal
         or recent_comprehensive
@@ -1545,20 +1667,32 @@ def classify_design(paper: dict[str, Any], context: SearchContext) -> tuple[str,
 
     has_review_type = any(pub_type == "review" for pub_type in publication_types)
 
+    citation_count = paper.get("citation_count") or 0
+    year = paper.get("year") or 0
+    journal = paper.get("journal", "").lower()
+    is_major_journal = any(term in journal for term in MAJOR_JOURNAL_TERMS)
+    landmark_age = year and year <= context.current_year - 5
+
     if has_any(pub_type_text, ["practice guideline", "guideline"]) or has_any(
         title, ["guideline", "consensus statement", "society statement", "scientific statement"]
     ):
-        design, score = "Guideline / consensus / society statement", 19
+        design, score = "Guideline / consensus / society statement", 23
     elif has_any(pub_type_text, ["systematic review", "meta-analysis"]) or has_any(
         title, ["systematic review", "meta-analysis", "meta analysis"]
     ):
-        design, score = "Systematic review / meta-analysis", 18
+        design, score = "Systematic review / meta-analysis", 20
     elif has_any(pub_type_text, ["randomized controlled trial"]) or (
         not has_review_type and looks_like_original_randomized_trial(title, abstract)
     ):
-        design, score = "Randomized controlled trial", 18
+        if is_major_journal and citation_count >= 200:
+            design, score = "Landmark randomized trial", 25
+        else:
+            design, score = "Randomized controlled trial", 18
     elif has_review_type:
-        design, score = "Narrative review", 10
+        if is_major_journal and citation_count >= 200 and landmark_age:
+            design, score = "Landmark physiological review", 22
+        else:
+            design, score = "Narrative review", 8
     elif has_any(title_and_types, ["diagnostic accuracy"]) or has_any(
         title, ["sensitivity", "specificity", "receiver operating"]
     ):
@@ -1569,10 +1703,16 @@ def classify_design(paper: dict[str, Any], context: SearchContext) -> tuple[str,
         design, score = "Large retrospective / database study", 12
     elif has_any(title_and_types, ["cohort", "observational"]):
         design, score = "Single-centre observational study", 9
+    elif has_any(text, ["in rats", "in mice", "in rabbits", "isolated lung", "ex vivo", "knockout mice"]):
+        design, score = "Experimental / animal / basic science", 10
+    elif has_any(text, ["transcriptomic", "proteomic", "rna-seq", "gene expression"]):
+        design, score = "Molecular / mechanistic study", 8
+    elif has_any(pub_type_text, ["editorial", "comment"]) or has_any(title, ["editorial", "commentary"]):
+        design, score = "Editorial / commentary", 5
     elif has_any(pub_type_text, ["case reports"]) or has_any(title, ["case report", "case series"]):
         design, score = "Case series / case report", 4
     else:
-        design, score = "Study design not clearly classified", 6
+        design, score = "Unclear", 3
 
     qtype = context.question_type.lower()
     if "intervention" in qtype and design in {
@@ -1597,7 +1737,7 @@ def classify_design(paper: dict[str, Any], context: SearchContext) -> tuple[str,
     ):
         score += 2
 
-    return design, min(20, max(0, score))
+    return design, min(25, max(0, score))
 
 
 def looks_like_original_randomized_trial(title: str, abstract: str) -> bool:
@@ -1615,9 +1755,12 @@ def looks_like_original_randomized_trial(title: str, abstract: str) -> bool:
     return bool(abstract_signal)
 
 
-def score_journal_quality(quartile: str) -> int:
-    normalized = normalize_quartile(quartile)
-    return JOURNAL_SCORE.get(normalized, 0)
+def score_journal_quality(quartile: str, journal: str = "") -> int:
+    base = JOURNAL_SCORE.get(quartile, 0)
+    journal_lower = (journal or "").lower()
+    if any(term in journal_lower for term in MAJOR_JOURNAL_TERMS):
+        base += JOURNAL_MAJOR_BONUS
+    return min(15, base)
 
 
 def score_citations(citation_count: int | None) -> tuple[int, str]:
@@ -1673,23 +1816,17 @@ def recent_high_quality_note(
 
 
 def assign_tier(paper: dict[str, Any]) -> str:
-    total = paper["total_score"]
-    relevance = paper["relevance_score"]
-    design = paper["study_design_score"]
-    journal = paper["journal_quality_score"]
-    citations = paper["citation_strength_score"]
-    recent_major = bool(paper.get("recent_high_quality_note"))
-
-    if (
-        relevance >= 30
-        and total >= 68
-        and design >= 14
-        and (journal >= 15 or citations >= 6 or recent_major or design >= 18)
-    ):
+    if paper.get("expected_paper_reason"):
         return "Tier 1: Must-read"
-    if relevance >= 24 and total >= 50 and design >= 8:
+
+    total = paper.get("total_score", 0)
+    relevance = paper.get("relevance_score", 0)
+
+    if total >= 80 and relevance >= 24:
+        return "Tier 1: Must-read"
+    if total >= 60 and relevance >= 18:
         return "Tier 2: Useful supporting"
-    if relevance >= 14 and total >= 30:
+    if total >= 40 and relevance >= 12:
         return "Tier 3: Background"
     return "Tier 4: Low priority"
 
@@ -1699,6 +1836,9 @@ def apply_tier_caps(
     score_only_tier: str,
     topic_max_tier_order: int,
 ) -> tuple[str, str]:
+    if paper.get("expected_paper_reason"):
+        return "Tier 1: Must-read", "landmark seed — promoted to Tier 1 regardless of gate/quality caps"
+
     cap_order = topic_max_tier_order
     cap_reasons = []
     if topic_max_tier_order > 1:

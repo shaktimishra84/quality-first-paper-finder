@@ -166,26 +166,34 @@ VISIBLE_COLUMN_ORDER = [
 
 FULL_COLUMNS = [
     "title",
+    "normalized_title",
     "authors",
     "year",
     "journal",
     "quartile",
     "quartile_source",
     "study_design",
+    "publication_type",
     "pmid",
     "doi",
     "url",
     "openalex_id",
     "semantic_scholar_url",
     "citation_count",
+    "citation_count_missing",
     "citation_source",
-    "relevance_score",
-    "study_design_score",
+    "clinical_relevance_score",
+    "design_strength_score",
     "journal_quality_score",
-    "citation_strength_score",
+    "citation_score",
     "recency_score",
+    "penalty_score",
+    "final_score",
     "total_score",
     "tier",
+    "reason_for_tier",
+    "ranking_confidence",
+    "landmark_seed_match",
     "score_only_tier",
     "tier_cap_reason",
     "reading_section",
@@ -356,6 +364,7 @@ def main() -> None:
     topic = st.session_state.get("last_topic", "")
     render_empty_source_state(result, df)
     render_metrics(result, df, topic)
+    render_missing_landmarks(result)
     render_errors(result)
 
     with st.expander("Search layers", expanded=False):
@@ -482,6 +491,21 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
         )
     if rejected:
         st.caption(f"{rejected} unverified records were excluded.")
+
+
+def render_missing_landmarks(result: dict) -> None:
+    missing = result.get("missing_expected", []) or []
+    expected_total = len(result.get("expected_papers", []) or [])
+    if not missing or expected_total == 0:
+        return
+    plural = "s" if len(missing) > 1 else ""
+    titles = ", ".join(item.get("title", "(untitled)")[:80] for item in missing[:3])
+    suffix = "" if len(missing) <= 3 else f" + {len(missing) - 3} more"
+    st.warning(
+        f"**Missing expected landmark paper{plural}** "
+        f"({len(missing)}/{expected_total}): {titles}{suffix}. "
+        f"See the **Missing expected** tab for full list."
+    )
 
 
 def render_errors(result: dict) -> None:
@@ -691,6 +715,8 @@ def render_paper_detail(row: pd.Series) -> None:
 
     diagnostic_bits: list[tuple[str, str]] = []
     for label, key in [
+        ("Reason for tier", "reason_for_tier"),
+        ("Ranking confidence", "ranking_confidence"),
         ("Why included", "why_included"),
         ("Topic gate reason", "topic_match_reason"),
         ("Landmark/review protection", "mandatory_review_reason"),

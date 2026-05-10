@@ -1,13 +1,18 @@
 {
   "key": "ventilator_induced_lung_injury",
   "display_name": "Ventilator-induced lung injury (VILI)",
+  "population_priority": "adult ICU / ARDS",
   "triggers": [
     "ventilator induced lung injury",
     "ventilator-induced lung injury",
     "ventilator associated lung injury",
     "ventilator-associated lung injury",
     "vili",
-    "vali"
+    "vali",
+    "lung protective ventilation",
+    "low tidal volume ventilation",
+    "driving pressure",
+    "mechanical power"
   ],
   "direct_phrases": [
     "ventilator induced lung injury",
@@ -25,18 +30,8 @@
   ],
   "direct_acronyms": ["vili", "vali"],
   "acronym_context": [
-    "ventilator",
-    "ventilation",
-    "ventilatory",
-    "lung",
-    "injury",
-    "ards",
-    "mechanical",
-    "tidal",
-    "pressure",
-    "stretch",
-    "barotrauma",
-    "volutrauma"
+    "ventilator", "ventilation", "ventilatory", "lung", "injury", "ards",
+    "mechanical", "tidal", "pressure", "stretch", "barotrauma", "volutrauma"
   ],
   "family_terms": [
     "acute respiratory distress syndrome",
@@ -64,15 +59,99 @@
     "open lung",
     "esophageal pressure",
     "high-frequency oscillatory ventilation",
-    "hfov"
+    "hfov",
+    "stress and strain",
+    "ardsnet"
+  ],
+  "must_include_concepts": [
+    "low tidal volume",
+    "plateau pressure",
+    "driving pressure",
+    "mechanical power",
+    "peep",
+    "stress and strain",
+    "volutrauma",
+    "atelectrauma",
+    "biotrauma",
+    "barotrauma",
+    "lung protective"
   ],
   "wrong_terms": [],
-  "pubmed_query": "\"ventilator-induced lung injury\"[Title/Abstract] OR \"ventilator induced lung injury\"[Title/Abstract] OR \"ventilator-associated lung injury\"[Title/Abstract] OR \"ventilator associated lung injury\"[Title/Abstract] OR \"mechanical ventilation-induced lung injury\"[Title/Abstract] OR \"Ventilator-Induced Lung Injury\"[MeSH Terms] OR (VILI[Title/Abstract] AND (lung[Title/Abstract] OR ventilation[Title/Abstract] OR ARDS[Title/Abstract] OR mechanical[Title/Abstract])) OR (VALI[Title/Abstract] AND (lung[Title/Abstract] OR ventilation[Title/Abstract] OR ARDS[Title/Abstract] OR mechanical[Title/Abstract]))",
+  "penalize": [
+    {
+      "name": "neonatal-only",
+      "match_terms": ["neonatal", "neonate", "newborn", "preterm infant", "premature infant"],
+      "score": -20,
+      "reason": "Adult ICU topic — neonatal-only paper"
+    },
+    {
+      "name": "pediatric-only",
+      "match_terms": ["pediatric intensive care", "paediatric intensive care", "picu", "children with", "in children"],
+      "score": -15,
+      "reason": "Adult ICU topic — pediatric-only paper"
+    },
+    {
+      "name": "perioperative-only",
+      "match_terms": ["perioperative", "intraoperative", "general anesthesia", "general anaesthesia", "elective surgery"],
+      "score": -10,
+      "reason": "Adult ICU topic — perioperative/anesthesia-only paper"
+    },
+    {
+      "name": "animal-only",
+      "match_terms": ["isolated rat lung", "isolated mouse lung", "isolated rabbit lung", "in rats", "in mice", "in rabbits", "ex vivo"],
+      "score": -10,
+      "reason": "Pure animal/ex-vivo study without direct clinical linkage"
+    },
+    {
+      "name": "molecular-only",
+      "match_terms": ["gene expression in", "transcriptomic", "proteomic", "rna-seq", "knockout mice"],
+      "score": -8,
+      "reason": "Pure molecular/mechanistic study without clinical context"
+    }
+  ],
+  "pubmed_query": "\"ventilator-induced lung injury\"[Title/Abstract] OR \"ventilator induced lung injury\"[Title/Abstract] OR \"ventilator-associated lung injury\"[Title/Abstract] OR \"ventilator associated lung injury\"[Title/Abstract] OR \"mechanical ventilation-induced lung injury\"[Title/Abstract] OR \"Ventilator-Induced Lung Injury\"[MeSH Terms] OR \"lung protective ventilation\"[Title/Abstract] OR \"lung-protective ventilation\"[Title/Abstract] OR (\"driving pressure\"[Title/Abstract] AND ARDS[Title/Abstract]) OR (\"mechanical power\"[Title/Abstract] AND (lung[Title/Abstract] OR ventilation[Title/Abstract])) OR (VILI[Title/Abstract] AND (lung[Title/Abstract] OR ventilation[Title/Abstract] OR ARDS[Title/Abstract])) OR (VALI[Title/Abstract] AND (lung[Title/Abstract] OR ventilation[Title/Abstract] OR ARDS[Title/Abstract]))",
   "expected_papers": [
     {
       "pmid": "24283226",
       "title": "Ventilator-induced lung injury.",
-      "reason": "NEJM 2013 review by Slutsky and Ranieri — canonical VILI reference"
+      "reason": "NEJM 2013 Slutsky & Ranieri — canonical VILI review",
+      "category": "Landmark physiological review"
+    },
+    {
+      "pmid": "9445314",
+      "title": "Ventilator-induced lung injury: lessons from experimental studies.",
+      "reason": "AJRCCM 1998 Dreyfuss & Saumon — foundational VILI mechanisms",
+      "category": "Landmark physiological review"
+    },
+    {
+      "pmid": "10793162",
+      "title": "Ventilation with lower tidal volumes as compared with traditional tidal volumes for acute lung injury and the acute respiratory distress syndrome.",
+      "reason": "NEJM 2000 ARDSNet — landmark trial defining low-tidal-volume ventilation",
+      "category": "Landmark randomized trial"
+    },
+    {
+      "pmid": "25693014",
+      "title": "Driving Pressure and Survival in the Acute Respiratory Distress Syndrome.",
+      "reason": "NEJM 2015 Amato — driving pressure as the central VILI mortality predictor",
+      "category": "Landmark physiological / pooled-analysis"
+    },
+    {
+      "pmid": "27620287",
+      "title": "Ventilator-related causes of lung injury: the mechanical power.",
+      "reason": "Intensive Care Medicine 2016 Gattinoni — mechanical power concept",
+      "category": "Landmark physiological review"
+    },
+    {
+      "pmid": "30291378",
+      "title": "Mechanical power of ventilation is associated with mortality in critically ill patients: an analysis of patients in two observational cohorts.",
+      "reason": "Intensive Care Medicine 2018 Serpa Neto — mechanical power × mortality",
+      "category": "Major observational cohort"
+    },
+    {
+      "pmid": "23688302",
+      "title": "Prone positioning in severe acute respiratory distress syndrome.",
+      "reason": "NEJM 2013 PROSEVA — landmark RCT for severe ARDS / VILI prevention",
+      "category": "Landmark randomized trial"
     }
   ],
   "gap_subtopics": [
@@ -114,7 +193,7 @@
     },
     {
       "name": "Pediatric / neonatal VILI",
-      "match_terms": ["pediatric", "paediatric", "neonatal", "neonate", "children", "infant", "newborn"],
+      "match_terms": ["pediatric ARDS", "pards", "neonatal ARDS"],
       "gap_statement": "No pediatric or neonatal VILI evidence in the accepted set.",
       "why_it_matters": "Pediatric and neonatal lungs respond differently to mechanical ventilation; PARDS guidelines diverge from adult.",
       "best_design": "Pediatric ARDS network cohort or PARDS-specific trial",
