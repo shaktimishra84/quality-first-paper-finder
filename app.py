@@ -19,29 +19,57 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
+
     :root {
-        --qf-blue: #2457a6;
-        --qf-red: #a23b3b;
-        --qf-amber: #c98a14;
-        --qf-green: #2f7a44;
+        --qf-blue:    #60A5FA;
+        --qf-red:     #F87171;
+        --qf-amber:   #FBBF24;
+        --qf-green:   #34D399;
+        --qf-tier-1:  #FBBF24;
+        --qf-tier-2:  #60A5FA;
+        --qf-tier-3:  #94A3B8;
+        --qf-tier-4:  #64748B;
+        --qf-noise:   #F87171;
+        --qf-muted:   rgba(160, 168, 180, 0.85);
+        --qf-surface-border: rgba(148, 163, 184, 0.18);
     }
+
+    html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea {
+        font-family: 'Fira Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-feature-settings: "tnum" 1, "ss01" 1;
+    }
+    [data-testid="stDataFrame"] {
+        font-family: 'Fira Sans', system-ui, sans-serif;
+        font-feature-settings: "tnum" 1;
+    }
+    [data-testid="stMetricValue"], code {
+        font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+    }
+
     .main .block-container {
         padding-top: 1.25rem;
         max-width: 1600px;
     }
-    h1 { font-size: 2.1rem; letter-spacing: -0.01em; }
-    h2 { font-size: 1.35rem; letter-spacing: 0; }
-    h3 { font-size: 1.1rem; letter-spacing: 0; }
+    h1 { font-size: 2.1rem; font-weight: 700; letter-spacing: -0.015em; }
+    h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.005em; }
+    h3 { font-size: 1.1rem; font-weight: 600; }
+    h4 { font-size: 1rem; font-weight: 600; }
+
     [data-testid="stMetric"] {
         background: var(--secondary-background-color);
-        border: 1px solid rgba(128, 128, 128, 0.22);
+        border: 1px solid var(--qf-surface-border);
         border-radius: 8px;
         padding: 0.65rem 0.85rem;
         color: var(--text-color);
+        transition: border-color 180ms ease;
     }
-    [data-testid="stMetricLabel"] { font-size: 0.78rem; opacity: 0.78; }
-    [data-testid="stMetricValue"] { font-size: 1.55rem; }
+    [data-testid="stMetric"]:hover { border-color: rgba(148, 163, 184, 0.35); }
+    [data-testid="stMetricLabel"] { font-size: 0.74rem; opacity: 0.7; letter-spacing: 0.02em; }
+    [data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 500; }
     [data-testid="stMetricDelta"] svg { display: none; }
+
     .qf-rule {
         border-left: 4px solid var(--qf-blue);
         padding: 0.35rem 0 0.35rem 0.75rem;
@@ -54,37 +82,50 @@ st.markdown(
     }
     .qf-chip {
         display: inline-block;
-        padding: 0.18rem 0.55rem;
+        padding: 0.2rem 0.6rem;
         border-radius: 999px;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         font-weight: 500;
         margin-right: 0.4rem;
+        margin-bottom: 0.25rem;
         border: 1px solid currentColor;
+        line-height: 1.4;
+        transition: background-color 150ms ease;
     }
     .qf-chip-blue   { color: var(--qf-blue); }
     .qf-chip-amber  { color: var(--qf-amber); }
     .qf-chip-green  { color: var(--qf-green); }
-    .qf-chip-muted  { color: rgba(160,160,170,0.85); }
+    .qf-chip-muted  { color: var(--qf-muted); }
+    .qf-chip-tier-1 { color: var(--qf-tier-1); background: rgba(251, 191, 36, 0.08); }
+    .qf-chip-tier-2 { color: var(--qf-tier-2); background: rgba(96, 165, 250, 0.08); }
+    .qf-chip-tier-3 { color: var(--qf-tier-3); }
+    .qf-chip-tier-4 { color: var(--qf-tier-4); }
+    .qf-chip-noise  { color: var(--qf-noise); background: rgba(248, 113, 113, 0.08); }
+
     .qf-section-caption {
-        font-size: 0.78rem;
+        font-size: 0.72rem;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
-        opacity: 0.65;
+        letter-spacing: 0.08em;
+        opacity: 0.6;
         margin: 0.35rem 0 0.4rem 0;
+        font-weight: 500;
     }
     .qf-detail {
         background: var(--secondary-background-color);
-        border: 1px solid rgba(128,128,128,0.22);
+        border: 1px solid var(--qf-surface-border);
         border-radius: 10px;
-        padding: 0.9rem 1.1rem;
+        padding: 1rem 1.2rem;
         margin-top: 0.5rem;
     }
-    .qf-detail h4 { margin-top: 0; }
-    .stTabs [data-baseweb="tab-list"] { gap: 0.4rem; }
+    .qf-detail h4 { margin-top: 0; margin-bottom: 0.6rem; line-height: 1.35; }
+
+    .stTabs [data-baseweb="tab-list"] { gap: 0.4rem; border-bottom: 1px solid var(--qf-surface-border); }
     .stTabs [data-baseweb="tab"] {
-        padding: 0.45rem 0.85rem;
+        padding: 0.5rem 0.9rem;
         border-radius: 6px 6px 0 0;
+        font-weight: 500;
     }
+    .stTabs [aria-selected="true"] { font-weight: 600; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -611,9 +652,17 @@ def render_paper_detail(row: pd.Series) -> None:
     chips: list[str] = []
     tier = row.get("tier")
     if tier:
-        cls = "qf-chip-blue" if "Tier 1" in str(tier) else (
-            "qf-chip-green" if "Tier 2" in str(tier) else "qf-chip-muted"
-        )
+        tier_str = str(tier)
+        if "Tier 1" in tier_str:
+            cls = "qf-chip-tier-1"
+        elif "Tier 2" in tier_str:
+            cls = "qf-chip-tier-2"
+        elif "Tier 3" in tier_str:
+            cls = "qf-chip-tier-3"
+        elif "Tier 4" in tier_str:
+            cls = "qf-chip-tier-4"
+        else:
+            cls = "qf-chip-noise"
         chips.append(f'<span class="qf-chip {cls}">{tier}</span>')
     gate = row.get("topic_match_gate")
     if gate:
