@@ -778,6 +778,7 @@ def section_order_for_mode(search_mode: str) -> list[str]:
             "Mechanistic/basic science papers",
             "Special populations",
             "Case reports/case series",
+            "Editorials/correspondence",
             "Low-priority/background papers",
         ],
         "Rare / Case Report": [
@@ -786,6 +787,7 @@ def section_order_for_mode(search_mode: str) -> list[str]:
             "Rare complications",
             "Rare associations",
             "Unusual diagnostic findings",
+            "Editorials/correspondence",
             "Background references",
             "Tier 4 / weak but related papers",
         ],

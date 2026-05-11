@@ -168,3 +168,34 @@ def test_case_report_ranks_highest_for_rare_mode() -> None:
     assert deep["tier"] in {"Tier 2: Useful supporting", "Tier 3: Background", "Tier 4: Low priority"}
     assert rare["search_mode"] == SEARCH_PURPOSE_RARE
     assert rare["relation_type"] == "Directly related"
+
+
+def test_editorial_correspondence_is_kept_in_deep_and_rare_modes() -> None:
+    paper = {
+        "title": "Correspondence: rare cerebral venous thrombosis complication after infection",
+        "abstract": "A rare cerebral venous thrombosis complication is discussed with clinical implications.",
+        "publication_types": ["Letter", "Comment"],
+        "journal": "Stroke",
+        "pmid": "333",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/333/",
+        "citation_count": 1,
+        "citation_source": "OpenAlex",
+        "year": 2024,
+    }
+
+    deep = score_and_classify_paper(
+        paper,
+        SearchContext(topic="cerebral venous thrombosis", search_purpose=SEARCH_PURPOSE_DEEP),
+        {},
+    )
+    rare = score_and_classify_paper(
+        paper,
+        SearchContext(topic="cerebral venous thrombosis", search_purpose=SEARCH_PURPOSE_RARE),
+        {},
+    )
+
+    assert deep["study_design"] == "Editorial / correspondence / commentary"
+    assert deep["reading_section"] == "Editorials/correspondence"
+    assert rare["study_design"] == "Editorial / correspondence / commentary"
+    assert rare["tier"] in {"Tier 1: Must-read", "Tier 2: Useful supporting"}
+    assert rare["publication_type"] == "Letter, Comment"

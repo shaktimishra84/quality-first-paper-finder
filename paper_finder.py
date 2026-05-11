@@ -144,6 +144,22 @@ RARE_CASE_TERMS = [
     "laboratory finding",
 ]
 
+LOW_EVIDENCE_PUBLICATION_TERMS = [
+    "case report",
+    "case reports",
+    "case series",
+    "letter",
+    "letters",
+    "correspondence",
+    "comment",
+    "comments",
+    "commentary",
+    "editorial",
+    "reply",
+    "opinion",
+    "perspective",
+]
+
 DATABASE_TERMS = [
     "mimic",
     "eicu",
@@ -210,7 +226,7 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Most exhaustive",
-        "description": "Broad exhaustive collection.",
+        "description": "Broad exhaustive collection across all publication types.",
     },
     SEARCH_PURPOSE_RARE: {
         "candidate_depth": 160,
@@ -219,7 +235,7 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Broad rare-event search",
-        "description": "Unusual cases, rare complications, and low-frequency reports.",
+        "description": "Unusual cases, rare complications, correspondence, editorials, and low-frequency reports.",
     },
 }
 SEARCH_PURPOSE_ALIASES = {
@@ -354,6 +370,13 @@ def build_search_layers(
         'OR "randomized controlled trial"[Publication Type] OR guideline[Publication Type] '
         'OR cohort OR observational OR database OR registry'
     )
+    inclusive_publication_clause = (
+        '"case reports"[Publication Type] OR "case report" OR "case series" OR '
+        'letter[Publication Type] OR letter OR correspondence OR '
+        'comment[Publication Type] OR comment OR commentary OR '
+        'editorial[Publication Type] OR editorial OR reply OR '
+        'opinion OR perspective'
+    )
 
     pico_terms = [topic_query]
     pico_terms.extend(
@@ -462,24 +485,43 @@ def build_search_layers(
             0,
             SearchLayer(
                 name="Screening pool",
-                purpose="Broad candidate pool for systematic-review style title/abstract screening.",
+                purpose="Broad candidate pool with no publication-type filter for exhaustive screening.",
                 query=f"({topic_query})",
                 retmax=max(candidate_depth, 200),
+            ),
+        )
+        layers.insert(
+            1,
+            SearchLayer(
+                name="Editorial/correspondence/case sweep",
+                purpose="Catch letters, correspondence, comments, editorials, case reports, and case series for inclusive deep search.",
+                query=f"({topic_query}) AND ({inclusive_publication_clause})",
+                retmax=max(candidate_depth // 2, 100),
             ),
         )
     if purpose == SEARCH_PURPOSE_RARE:
         rare_clause = (
             '"case reports"[Publication Type] OR "case report" OR "case series" OR '
             'rare OR unusual OR uncommon OR atypical OR complication OR complications OR '
-            '"adverse event" OR "adverse drug" OR presentation OR association OR imaging OR laboratory'
+            '"adverse event" OR "adverse drug" OR presentation OR association OR imaging OR laboratory OR '
+            f"{inclusive_publication_clause}"
         )
         layers.insert(
             0,
             SearchLayer(
                 name="Rare/case reports",
-                purpose="Find rare presentations, complications, adverse events, case reports, and case series.",
+                purpose="Find rare presentations, complications, adverse events, case reports, correspondence, editorials, and case series.",
                 query=f"({topic_query}) AND ({rare_clause})",
                 retmax=max(candidate_depth, 150),
+            ),
+        )
+        layers.insert(
+            1,
+            SearchLayer(
+                name="Rare all-publication screening pool",
+                purpose="Keep rare-mode retrieval open to any PubMed publication type before ranking and labelling.",
+                query=f"({topic_query})",
+                retmax=max(candidate_depth // 2, 100),
             ),
         )
     return layers
@@ -2446,12 +2488,12 @@ def classify_design(paper: dict[str, Any], context: SearchContext) -> tuple[str,
         design, score = "Single-centre observational study", 9
     elif has_any(text, ["in rats", "in mice", "in rabbits", "isolated lung", "ex vivo", "knockout mice"]):
         design, score = "Experimental / animal / basic science", 10
-    elif has_any(text, ["transcriptomic", "proteomic", "rna-seq", "gene expression"]):
-        design, score = "Molecular / mechanistic study", 8
-    elif has_any(pub_type_text, ["editorial", "comment"]) or has_any(title, ["editorial", "commentary"]):
-        design, score = "Editorial / commentary", 5
     elif has_any(pub_type_text, ["case reports"]) or has_any(title, ["case report", "case series"]):
         design, score = "Case series / case report", 4
+    elif has_any(text, ["transcriptomic", "proteomic", "rna-seq", "gene expression"]):
+        design, score = "Molecular / mechanistic study", 8
+    elif has_any(f"{pub_type_text} {title}", LOW_EVIDENCE_PUBLICATION_TERMS):
+        design, score = "Editorial / correspondence / commentary", 5
     else:
         design, score = "Unclear", 3
 
@@ -2563,7 +2605,12 @@ def search_purpose_adjustment(
 ) -> tuple[int, str]:
     purpose = normalized_search_purpose(context.search_purpose)
     title = paper.get("title", "").lower()
-    text = f"{title} {paper.get('abstract', '')}".lower()
+    publication_type_text = " ".join(
+        item.lower()
+        for item in paper.get("publication_types", [])
+        if isinstance(item, str)
+    )
+    text = f"{title} {paper.get('abstract', '')} {publication_type_text}".lower()
     year = paper.get("year") or 0
     recent = bool(year and context.current_year - year <= 3)
     direct = paper.get("topic_match_level") in {"direct", "abstract_only"}
@@ -2601,11 +2648,12 @@ def search_purpose_adjustment(
             "Large retrospective / database study",
             "Single-centre observational study",
             "Case series / case report",
+            "Editorial / correspondence / commentary",
             "Experimental / animal / basic science",
             "Molecular / mechanistic study",
         }:
             score += 5
-            reasons.append("deep search keeps all relevant study designs")
+            reasons.append("deep search keeps all relevant study and publication types")
         elif design in {"Systematic review / meta-analysis", "Guideline / consensus / society statement"}:
             score += 3
             reasons.append("deep search keeps reviews/guidelines as cross-reference sources")
@@ -2617,6 +2665,9 @@ def search_purpose_adjustment(
         elif rare_signal:
             score += 10
             reasons.append("rare/case mode prioritizes rare presentations or complications")
+        elif design == "Editorial / correspondence / commentary":
+            score += 6
+            reasons.append("rare/case mode keeps correspondence, letters, editorials, and comments")
         elif design in {
             "Large retrospective / database study",
             "Single-centre observational study",
@@ -2662,7 +2713,11 @@ def search_purpose_adjustment(
         if has_any(text, LMIC_TERMS + ["implementation", "feasibility", "external validation"]):
             score += 3
             reasons.append("implementation, validation, or LMIC relevance")
-        if design in {"Narrative review", "Editorial / commentary", "Case series / case report"}:
+        if design in {
+            "Narrative review",
+            "Editorial / correspondence / commentary",
+            "Case series / case report",
+        }:
             score -= 4
             reasons.append("research mode down-ranks narrative, opinion, and small case evidence")
 
@@ -2950,6 +3005,8 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
             return "Special populations"
         if design == "Case series / case report":
             return "Case reports/case series"
+        if design == "Editorial / correspondence / commentary":
+            return "Editorials/correspondence"
         return "Low-priority/background papers"
 
     if purpose == SEARCH_PURPOSE_RARE:
@@ -2963,6 +3020,8 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
             return "Rare associations"
         if has_any(text, ["diagnostic", "imaging", "laboratory", "radiologic", "radiological"]):
             return "Unusual diagnostic findings"
+        if design == "Editorial / correspondence / commentary":
+            return "Editorials/correspondence"
         if tier_order >= 4 or not rare_signal:
             return "Tier 4 / weak but related papers"
         return "Background references"
@@ -3005,6 +3064,7 @@ def reading_section_order(search_mode: str) -> dict[str, int]:
             "Mechanistic/basic science papers",
             "Special populations",
             "Case reports/case series",
+            "Editorials/correspondence",
             "Low-priority/background papers",
         ],
         SEARCH_PURPOSE_RARE: [
@@ -3013,6 +3073,7 @@ def reading_section_order(search_mode: str) -> dict[str, int]:
             "Rare complications",
             "Rare associations",
             "Unusual diagnostic findings",
+            "Editorials/correspondence",
             "Background references",
             "Tier 4 / weak but related papers",
         ],

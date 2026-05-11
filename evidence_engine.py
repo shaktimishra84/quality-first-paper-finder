@@ -79,7 +79,7 @@ EVIDENCE_HIERARCHY = [
     "Case series / case report",
     "Experimental / animal / basic science",
     "Molecular / mechanistic study",
-    "Editorial / commentary",
+    "Editorial / correspondence / commentary",
     "Unclear",
 ]
 

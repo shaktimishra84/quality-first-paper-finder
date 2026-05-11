@@ -10,7 +10,7 @@ The app builds an ICU literature knowledge base by searching broadly, admitting 
 - Uses a mandatory expected-paper sanity layer for topics with known sentinel papers, starting with cerebral venous thrombosis.
 - Runs an API discovery supervisor before scoring: narrow PubMed exact/focused searches, Europe PMC, OpenAlex PMID discovery, and optional PubMed related-article expansion.
 - Builds a medical evidence review artifact with source IDs, evidence hierarchy, source comparison, citation verification caveats, gaps, and limitations.
-- Uses researcher-facing search modes instead of technical depth knobs: Knowledge / Learning, Research, Deep Search, and Rare / Case Report.
+- Uses researcher-facing search modes instead of technical depth knobs: Knowledge / Learning, Research, Deep Search, and Rare / Case Report. Deep and Rare modes keep all relevant publication types visible, including editorials, correspondence, letters, comments, case reports, and case series.
 - Admits only papers with a verifiable PMID, DOI, PubMed link, OpenAlex record, or Semantic Scholar record.
 - Enriches accepted records with OpenAlex citation counts and optional Semantic Scholar cross-checks.
 - Lets citation enrichment scale up to the retrieved candidate set while keeping it optional.
@@ -21,7 +21,7 @@ The app builds an ICU literature knowledge base by searching broadly, admitting 
   - Journal quality: 20
   - Citation strength: 10
   - Recency: 10
-- Splits output into search-mode-specific sections such as best reviews, original research papers, exhaustive evidence buckets, or closest matching case reports.
+- Splits output into search-mode-specific sections such as best reviews, original research papers, exhaustive evidence buckets, editorials/correspondence, or closest matching case reports.
 - Protects major reviews and landmark candidates from disappearing when citation counts or journal quartiles are temporarily unavailable.
 - Marks missing data explicitly instead of guessing.
 - Exports the full CSV database, core reading pack CSV, and PMID list.
