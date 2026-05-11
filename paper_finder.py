@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 import requests
 
+from evidence_engine import build_evidence_review
 from topic_primer import TopicPrimer, prime_topic
 
 
@@ -597,7 +598,11 @@ def run_quality_first_search(
     scored.sort(key=paper_sort_key)
     missing_expected = missing_expected_papers(expected_papers, scored)
 
-    return {
+    summary = generate_knowledge_summary(scored, context, manual_google_scholar_notes)
+    gap_map = generate_gap_map(scored, context)
+    subtopic_coverage = compute_subtopic_coverage(scored, context)
+
+    result = {
         "search_date": date.today().isoformat(),
         "layers": layers,
         "papers": scored,
@@ -605,9 +610,9 @@ def run_quality_first_search(
         "deduped_count": len(deduped),
         "rejected_unverified": rejected,
         "errors": errors,
-        "summary": generate_knowledge_summary(scored, context, manual_google_scholar_notes),
-        "gap_map": generate_gap_map(scored, context),
-        "subtopic_coverage": compute_subtopic_coverage(scored, context),
+        "summary": summary,
+        "gap_map": gap_map,
+        "subtopic_coverage": subtopic_coverage,
         "expected_papers": expected_papers,
         "recovered_expected": recovered_expected,
         "missing_expected": missing_expected,
@@ -620,7 +625,18 @@ def run_quality_first_search(
         "mesh_discovered": discovered_mesh,
         "topic_primer_status": primer_status,
         "api_discovery": api_discovery,
+        "question_context": {
+            "topic": context.topic,
+            "original_topic": original_topic,
+            "population": context.population,
+            "intervention": context.intervention,
+            "comparator": context.comparator,
+            "outcome": context.outcome,
+            "question_type": context.question_type,
+        },
     }
+    result["evidence_review"] = build_evidence_review(result)
+    return result
 
 
 def expected_papers_for_topic(topic: str) -> list[dict[str, str]]:

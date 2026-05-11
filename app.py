@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from evidence_engine import build_evidence_review
 from paper_finder import (
     SearchContext,
     parse_quartile_overrides,
@@ -404,6 +405,7 @@ def main() -> None:
             "Extended evidence base",
             "Low-priority / indirect",
             "Missing expected",
+            "Evidence review",
             "Knowledge summary",
             "Research gap map",
             "Exports",
@@ -428,12 +430,15 @@ def main() -> None:
         render_expected_papers(result)
 
     with tabs[4]:
-        render_knowledge_summary(result["summary"])
+        render_evidence_review(result)
 
     with tabs[5]:
-        render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
+        render_knowledge_summary(result["summary"])
 
     with tabs[6]:
+        render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
+
+    with tabs[7]:
         render_exports(full_df, display_df)
 
 
@@ -874,6 +879,137 @@ def render_knowledge_summary(summary: dict) -> None:
         st.subheader(title)
         for line in summary.get(key, []):
             st.markdown(f"- {line}")
+
+
+def render_evidence_review(result: dict) -> None:
+    review = result.get("evidence_review") or build_evidence_review(result)
+    verification = review.get("verification", {}) or {}
+
+    st.subheader("Medical Evidence Review")
+    st.caption("Structured synthesis with source IDs, evidence hierarchy, verification caveats, and gaps.")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Sources reviewed", verification.get("records_reviewed", 0))
+    c2.metric("PMID verified", verification.get("pmid_verified", 0))
+    c3.metric("DOI present", verification.get("doi_present", 0))
+    c4.metric("Citation counts", verification.get("citation_counts_available", 0))
+
+    blocked = verification.get("blocked_checks")
+    if blocked and blocked != "None flagged by metadata pipeline.":
+        st.warning(blocked)
+
+    top_records = pd.DataFrame(review.get("top_relevant_papers", []))
+    if not top_records.empty:
+        top_display = top_records[
+            [
+                "source_id",
+                "title",
+                "journal",
+                "year",
+                "evidence_type",
+                "tier",
+                "confidence",
+                "pmid",
+                "doi",
+            ]
+        ].copy()
+        top_display["year"] = pd.to_numeric(top_display["year"], errors="coerce").astype("Int64")
+        st.markdown('<div class="qf-section-caption">Top relevant papers</div>', unsafe_allow_html=True)
+        st.dataframe(
+            top_display,
+            use_container_width=True,
+            hide_index=True,
+            height=min(520, 56 + 34 * len(top_records)),
+            column_config={
+                "source_id": st.column_config.TextColumn("ID", width="small"),
+                "title": st.column_config.TextColumn("Title", width="large"),
+                "journal": st.column_config.TextColumn("Journal", width="medium"),
+                "year": st.column_config.NumberColumn("Year", format="%d", width="small"),
+                "evidence_type": st.column_config.TextColumn("Evidence type", width="medium"),
+                "tier": st.column_config.TextColumn("Tier", width="small"),
+                "confidence": st.column_config.TextColumn("Confidence", width="small"),
+                "pmid": st.column_config.TextColumn("PMID", width="small"),
+                "doi": st.column_config.TextColumn("DOI", width="medium"),
+            },
+        )
+    else:
+        st.info("No review-eligible sources were admitted.")
+
+    st.markdown('<div class="qf-section-caption">Major evidence buckets</div>', unsafe_allow_html=True)
+    bucket_cols = st.columns(3)
+    buckets = [
+        ("Guidelines", review.get("major_guidelines", [])),
+        ("Systematic reviews", review.get("major_systematic_reviews", [])),
+        ("RCTs", review.get("major_randomized_trials", [])),
+    ]
+    for col, (title, records) in zip(bucket_cols, buckets):
+        with col:
+            st.markdown(f"**{title}**")
+            if not records:
+                st.caption("None retrieved.")
+            for record in records[:5]:
+                st.caption(f"{record.get('source_id')}: {record.get('title')}")
+
+    hierarchy_df = pd.DataFrame(review.get("evidence_hierarchy", []))
+    if not hierarchy_df.empty:
+        hierarchy_df["example_sources"] = hierarchy_df["example_sources"].apply(
+            lambda values: ", ".join(values) if isinstance(values, list) else str(values)
+        )
+        st.markdown('<div class="qf-section-caption">Evidence hierarchy</div>', unsafe_allow_html=True)
+        st.dataframe(
+            hierarchy_df[["hierarchy_rank", "evidence_type", "count", "example_sources"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "hierarchy_rank": st.column_config.NumberColumn("Rank", width="small"),
+                "evidence_type": st.column_config.TextColumn("Evidence type", width="large"),
+                "count": st.column_config.NumberColumn("Papers", width="small"),
+                "example_sources": st.column_config.TextColumn("Examples", width="medium"),
+            },
+        )
+
+    comparison_df = pd.DataFrame(review.get("source_comparison", []))
+    if not comparison_df.empty:
+        with st.expander("Source comparison matrix", expanded=False):
+            st.dataframe(
+                comparison_df[["source_id", "evidence_type", "key_role", "confidence", "caveats"]],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "source_id": st.column_config.TextColumn("ID", width="small"),
+                    "evidence_type": st.column_config.TextColumn("Evidence type", width="medium"),
+                    "key_role": st.column_config.TextColumn("Role", width="medium"),
+                    "confidence": st.column_config.TextColumn("Confidence", width="small"),
+                    "caveats": st.column_config.TextColumn("Caveats", width="large"),
+                },
+            )
+
+    gap_col, limit_col = st.columns(2)
+    with gap_col:
+        st.markdown("**Gaps**")
+        for gap in review.get("gaps", [])[:10]:
+            st.markdown(f"- {gap}")
+    with limit_col:
+        st.markdown("**Limitations / uncertainty**")
+        for item in review.get("limitations", [])[:10]:
+            st.markdown(f"- {item}")
+
+    with st.expander("Workflow and prompt pattern adapted from Feynman", expanded=False):
+        for item in review.get("workflow", []):
+            st.markdown(f"- **{item.get('stage')}** - {item.get('status')}")
+        st.markdown("**Biomedical prompt structure**")
+        for item in review.get("prompt_structure", []):
+            st.markdown(f"- {item}")
+        st.caption(review.get("license_notice", ""))
+
+    markdown = review.get("markdown", "")
+    if markdown:
+        st.download_button(
+            "Download evidence review Markdown",
+            data=markdown.encode("utf-8"),
+            file_name="quality_first_evidence_review.md",
+            mime="text/markdown",
+        )
 
 
 def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
