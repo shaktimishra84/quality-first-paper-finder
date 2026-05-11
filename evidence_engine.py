@@ -15,10 +15,13 @@ Streamlit/PubMed application and operates on already retrieved paper metadata.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from datetime import date
 from typing import Any
+
+import requests
 
 
 FEYNMAN_MIT_NOTICE = (
@@ -86,9 +89,19 @@ HIGH_VALUE_DESIGNS = {
     "Landmark randomized trial",
     "Randomized controlled trial",
 }
+GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_ENDPOINT = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+)
+GAP_SYNTHESIS_TIMEOUT_S = 35
 
 
-def build_evidence_review(result: dict[str, Any], max_sources: int = 80) -> dict[str, Any]:
+def build_evidence_review(
+    result: dict[str, Any],
+    max_sources: int = 80,
+    gemini_key: str = "",
+    generate_ai_gaps: bool = False,
+) -> dict[str, Any]:
     """Build a structured biomedical review artifact from a search result."""
     papers = [paper for paper in result.get("papers", []) if _is_review_eligible(paper)]
     source_records = [_source_record(index + 1, paper) for index, paper in enumerate(papers[:max_sources])]
@@ -122,9 +135,12 @@ def build_evidence_review(result: dict[str, Any], max_sources: int = 80) -> dict
         "verification": verification,
         "gaps": gaps,
         "limitations": limitations,
+        "ai_gap_synthesis": {"status": "not_requested", "items": []},
         "sources": source_records,
         "license_notice": FEYNMAN_MIT_NOTICE,
     }
+    if generate_ai_gaps:
+        report["ai_gap_synthesis"] = generate_ai_gap_synthesis(report, gemini_key)
     report["markdown"] = evidence_review_to_markdown(report)
     return report
 
@@ -144,6 +160,7 @@ def evidence_review_to_markdown(review: dict[str, Any]) -> str:
     question = review.get("question", {}) or {}
     for label, key in [
         ("Topic", "topic"),
+        ("Search purpose", "search_purpose"),
         ("Question type", "question_type"),
         ("Population", "population"),
         ("Intervention / exposure", "intervention"),
@@ -203,6 +220,27 @@ def evidence_review_to_markdown(review: dict[str, Any]) -> str:
     for gap in review.get("gaps", []) or []:
         lines.append(f"- {gap}")
 
+    ai_gap = review.get("ai_gap_synthesis", {}) or {}
+    ai_items = ai_gap.get("items", []) or []
+    if ai_items or ai_gap.get("status") not in {"", None, "not_requested"}:
+        lines.extend(["", "## AI-Assisted Gap Hypotheses"])
+        status = ai_gap.get("status", "")
+        if status and status != "generated":
+            lines.append(f"Status: {status}")
+        if ai_gap.get("note"):
+            lines.append(str(ai_gap["note"]))
+        for item in ai_items:
+            sources = ", ".join(item.get("source_ids", []) or [])
+            lines.append(
+                "- **{gap}** ({confidence}). Sources: {sources}. Suggested design: {design}. {rationale}".format(
+                    gap=item.get("gap", ""),
+                    confidence=item.get("confidence", "uncertain"),
+                    sources=sources or "source IDs unavailable",
+                    design=item.get("suggested_design", "not specified"),
+                    rationale=item.get("rationale", ""),
+                )
+            )
+
     lines.extend(["", "## Limitations and Uncertainty"])
     for item in review.get("limitations", []) or []:
         lines.append(f"- {item}")
@@ -214,6 +252,147 @@ def evidence_review_to_markdown(review: dict[str, Any]) -> str:
 
     lines.extend(["", "## Adapted Workflow Notice", review.get("license_notice", FEYNMAN_MIT_NOTICE)])
     return "\n".join(lines).strip() + "\n"
+
+
+def generate_ai_gap_synthesis(review: dict[str, Any], gemini_key: str) -> dict[str, Any]:
+    """Generate bounded, source-ID-based research-gap hypotheses.
+
+    The LLM is allowed to synthesize only from source metadata already admitted
+    by the deterministic pipeline. It cannot add papers or citations.
+    """
+    if not gemini_key:
+        return {
+            "status": "not_configured",
+            "items": [],
+            "note": "Add a Gemini API key to enable source-grounded AI gap hypotheses.",
+        }
+
+    sources = [
+        {
+            "source_id": source.get("source_id"),
+            "title": source.get("title"),
+            "year": source.get("year"),
+            "evidence_type": source.get("evidence_type"),
+            "tier": source.get("tier"),
+            "why_matters": source.get("why_matters"),
+            "caveats": source.get("caveats"),
+        }
+        for source in (review.get("sources", []) or [])[:35]
+    ]
+    if not sources:
+        return {
+            "status": "blocked",
+            "items": [],
+            "note": "No verified sources were available for AI gap synthesis.",
+        }
+
+    schema = {
+        "type": "OBJECT",
+        "properties": {
+            "gap_hypotheses": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "gap": {"type": "STRING"},
+                        "rationale": {"type": "STRING"},
+                        "source_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
+                        "suggested_design": {"type": "STRING"},
+                        "confidence": {"type": "STRING"},
+                        "limitations": {"type": "STRING"},
+                    },
+                    "required": ["gap", "rationale", "source_ids", "suggested_design", "confidence"],
+                },
+            }
+        },
+        "required": ["gap_hypotheses"],
+    }
+    system = (
+        "You are a biomedical research methodologist. Generate source-grounded "
+        "research gap hypotheses only from the provided source IDs and metadata. "
+        "Do not invent papers, effect sizes, recommendations, or patient-specific "
+        "medical advice. Each gap must cite at least one provided source_id. "
+        "Use confidence values: high, moderate, low, speculative."
+    )
+    body = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": (
+                            "Review question and source metadata:\n"
+                            + _jsonish(
+                                {
+                                    "question": review.get("question", {}),
+                                    "evidence_hierarchy": review.get("evidence_hierarchy", []),
+                                    "deterministic_gaps": review.get("gaps", []),
+                                    "sources": sources,
+                                }
+                            )
+                        )
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "response_schema": schema,
+            "temperature": 0.15,
+        },
+    }
+
+    try:
+        response = requests.post(
+            f"{GEMINI_ENDPOINT}?key={gemini_key}",
+            json=body,
+            timeout=GAP_SYNTHESIS_TIMEOUT_S,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        candidates = payload.get("candidates") or []
+        parts = candidates[0].get("content", {}).get("parts") if candidates else []
+        raw_text = "".join(part.get("text", "") for part in parts or [] if isinstance(part, dict))
+        parsed = json.loads(raw_text)
+    except Exception as exc:
+        return {
+            "status": "blocked",
+            "items": [],
+            "note": f"AI gap synthesis could not be completed: {str(exc)[:160]}",
+        }
+
+    valid_source_ids = {source["source_id"] for source in sources if source.get("source_id")}
+    items: list[dict[str, Any]] = []
+    for raw in parsed.get("gap_hypotheses", []) if isinstance(parsed, dict) else []:
+        if not isinstance(raw, dict):
+            continue
+        source_ids = [
+            str(source_id)
+            for source_id in raw.get("source_ids", [])
+            if str(source_id) in valid_source_ids
+        ]
+        if not source_ids:
+            continue
+        confidence = str(raw.get("confidence", "low") or "low").lower()
+        if confidence not in {"high", "moderate", "low", "speculative"}:
+            confidence = "low"
+        items.append(
+            {
+                "gap": str(raw.get("gap", "") or "").strip(),
+                "rationale": str(raw.get("rationale", "") or "").strip(),
+                "source_ids": source_ids[:6],
+                "suggested_design": str(raw.get("suggested_design", "") or "").strip(),
+                "confidence": confidence,
+                "limitations": str(raw.get("limitations", "") or "").strip(),
+            }
+        )
+        if len(items) >= 8:
+            break
+    return {
+        "status": "generated" if items else "blocked",
+        "items": items,
+        "note": "AI gap hypotheses cite source IDs from the verified result set only.",
+    }
 
 
 def _source_record(source_number: int, paper: dict[str, Any]) -> dict[str, Any]:
@@ -414,8 +593,9 @@ def _workflow_trace(result: dict[str, Any]) -> list[dict[str, str]]:
     missing_expected = len(result.get("missing_expected", []) or [])
     retrieved = result.get("retrieved_count", 0)
     accepted = len(result.get("papers", []) or [])
+    purpose = result.get("search_purpose", "research goal")
     values = {
-        "Plan": f"Topic/PICO framed; {layer_count} search layers configured.",
+        "Plan": f"Topic/PICO framed for {purpose}; {layer_count} search layers configured.",
         "Gather": f"{retrieved} candidate records gathered; API supervisor contributed {api_pmids} PMID(s).",
         "Researcher triage": f"{accepted} verified records admitted after dedupe, topic gate, and design classification.",
         "Verifier": "PMID/DOI/source identifiers checked before admission; enrichment caveats retained.",
@@ -433,6 +613,7 @@ def _question_context(result: dict[str, Any]) -> dict[str, str]:
     topic = context.get("topic") or result.get("topic_used") or result.get("topic_original") or ""
     return {
         "topic": str(topic),
+        "search_purpose": str(context.get("search_purpose", result.get("search_purpose", "")) or ""),
         "question_type": str(context.get("question_type", "General evidence map") or ""),
         "population": str(context.get("population", "") or ""),
         "intervention": str(context.get("intervention", "") or ""),
@@ -573,6 +754,10 @@ def _citation_line(source: dict[str, Any]) -> str:
 def _md(value: Any) -> str:
     text = str(value or "")
     return text.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _jsonish(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True, indent=2)
 
 
 def _dedupe(values: list[str]) -> list[str]:

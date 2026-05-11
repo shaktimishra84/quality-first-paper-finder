@@ -5,9 +5,12 @@ import streamlit as st
 
 from evidence_engine import build_evidence_review
 from paper_finder import (
+    SEARCH_PURPOSE_DEFAULT,
+    SEARCH_PURPOSE_OPTIONS,
     SearchContext,
     parse_quartile_overrides,
     run_quality_first_search,
+    search_purpose_config,
     topic_profile,
 )
 
@@ -144,6 +147,7 @@ DISPLAY_COLUMNS = [
     "year",
     "study_design",
     "citation_count",
+    "purpose_fit_reason",
     "mandatory_review_reason",
     "expected_paper_reason",
     "api_discovery_reason",
@@ -189,6 +193,8 @@ FULL_COLUMNS = [
     "journal_quality_score",
     "citation_score",
     "recency_score",
+    "purpose_fit_score",
+    "purpose_fit_reason",
     "penalty_score",
     "final_score",
     "total_score",
@@ -227,7 +233,7 @@ FULL_COLUMNS = [
 
 def main() -> None:
     st.title("Quality-First Paper Finder")
-    st.caption("Knowledge-base builder with landmark/review discovery and strict topic gates")
+    st.caption("Purpose-aware medical literature search with landmark discovery, strict topic gates, and evidence review")
 
     search_expanded = st.session_state.get("result") is None
     with st.expander("Search setup", expanded=search_expanded):
@@ -237,16 +243,16 @@ def main() -> None:
                 placeholder="Example: cerebral venous thrombosis · vili · sepsis",
                 height=74,
             )
-            max_results = st.slider(
-                "Candidate depth",
-                min_value=25,
-                max_value=200,
-                value=100,
-                step=5,
-                help="Maximum candidates pulled per search layer (6 layers run in parallel).",
+            search_purpose = st.segmented_control(
+                "Search goal",
+                options=SEARCH_PURPOSE_OPTIONS,
+                default=SEARCH_PURPOSE_DEFAULT,
+                help="Choose the research task. The app selects retrieval depth and ranking emphasis automatically.",
             )
+            purpose_config = search_purpose_config(search_purpose)
+            st.caption(f"{purpose_config['description']} {purpose_config['runtime_label']}.")
 
-            with st.expander("Advanced — PICO, infrastructure, enrichment", expanded=False):
+            with st.expander("Optional researcher details", expanded=False):
                 pico_col_1, pico_col_2, pico_col_3 = st.columns(3)
                 with pico_col_1:
                     question_type = st.selectbox(
@@ -266,9 +272,14 @@ def main() -> None:
                 with pico_col_3:
                     outcome = st.text_input("Outcome", placeholder="Mortality, recurrence")
 
-                st.markdown("---")
+                google_notes = st.text_area(
+                    "Manual Google Scholar notes",
+                    placeholder="Use only for cross-checking landmark or cited-by observations.",
+                    height=70,
+                )
 
-                infra_col_1, infra_col_2, infra_col_3, infra_col_4 = st.columns(4)
+            with st.expander("App keys and optional verification files", expanded=False):
+                infra_col_1, infra_col_2, infra_col_3 = st.columns(3)
                 with infra_col_1:
                     email = st.text_input("NCBI email", placeholder="Optional")
                 with infra_col_2:
@@ -307,25 +318,14 @@ def main() -> None:
                         help=gemini_help,
                     )
                     gemini_api_key = (gemini_field or secret_gemini_key or "").strip()
-                with infra_col_4:
-                    enrichment_limit = st.slider("Citation enrichment limit", 0, 150, 100, step=10)
 
-                enrich_col_1, enrich_col_2, enrich_col_3 = st.columns(3)
-                with enrich_col_1:
-                    use_openalex = st.checkbox("OpenAlex citations", value=True)
-                with enrich_col_2:
-                    use_semantic = st.checkbox("Semantic Scholar check", value=False)
-                with enrich_col_3:
-                    quartile_file = st.file_uploader(
-                        "Journal quartile CSV",
-                        type=["csv"],
-                        help="Optional columns: journal, quartile, quartile_source.",
-                    )
-
-                google_notes = st.text_area(
-                    "Manual Google Scholar notes",
-                    placeholder="Use only for cross-checking landmark or cited-by observations.",
-                    height=70,
+                quartile_file = st.file_uploader(
+                    "Journal quartile CSV",
+                    type=["csv"],
+                    help="Optional columns: journal, quartile, quartile_source.",
+                )
+                st.caption(
+                    "The app automatically chooses how wide to search and how much metadata to check."
                 )
 
             submitted = st.form_submit_button("Run search", type="primary", use_container_width=True)
@@ -342,10 +342,14 @@ def main() -> None:
             "comparator": comparator.strip(),
             "outcome": outcome.strip(),
             "question_type": question_type,
+            "search_purpose": search_purpose,
         }
         # Streamlit Cloud can briefly hot-reload app.py while retaining an older
         # imported paper_finder module during deploy.
-        if "gemini_api_key" in getattr(SearchContext, "__dataclass_fields__", {}):
+        context_fields = getattr(SearchContext, "__dataclass_fields__", {})
+        if "search_purpose" not in context_fields:
+            context_kwargs.pop("search_purpose", None)
+        if "gemini_api_key" in context_fields:
             context_kwargs["gemini_api_key"] = gemini_api_key
         context = SearchContext(**context_kwargs)
         with st.status("Searching PubMed in parallel...", expanded=True) as status:
@@ -358,11 +362,11 @@ def main() -> None:
 
             result = run_quality_first_search(
                 context=context,
-                max_results_per_layer=max_results,
+                max_results_per_layer=int(purpose_config["candidate_depth"]),
                 email=email.strip(),
-                use_openalex=use_openalex,
-                use_semantic_scholar=use_semantic,
-                enrichment_limit=enrichment_limit,
+                use_openalex=True,
+                use_semantic_scholar=bool(purpose_config["semantic_scholar"]),
+                enrichment_limit=int(purpose_config["enrichment_limit"]),
                 quartile_overrides=quartile_overrides,
                 manual_google_scholar_notes=google_notes,
                 progress_callback=report_progress,
@@ -456,6 +460,14 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
     effective_topic = result.get("topic_used", topic)
     profile = topic_profile(effective_topic) if effective_topic else None
     chips: list[str] = []
+    search_purpose = result.get("search_purpose")
+    if search_purpose:
+        purpose_config = result.get("search_purpose_config", {}) or {}
+        runtime = purpose_config.get("runtime_label", "")
+        chips.append(
+            f'<span class="qf-chip qf-chip-blue">Search goal: {search_purpose}'
+            f'{f" · {runtime}" if runtime else ""}</span>'
+        )
     if expanded:
         chips.append(
             f'<span class="qf-chip qf-chip-amber">Expanded "{original}" → "{expanded}"</span>'
@@ -670,6 +682,7 @@ def render_paper_table(
             "journal": st.column_config.TextColumn("Journal", width="medium"),
             "study_design": st.column_config.TextColumn("Design", width="small"),
             "citation_count": st.column_config.NumberColumn("Citations", format="%d", width="small"),
+            "purpose_fit_reason": st.column_config.TextColumn("Goal fit", width="medium"),
             "mandatory_review_reason": st.column_config.TextColumn("Landmark/review protection", width="medium"),
             "expected_paper_reason": st.column_config.TextColumn("Expected-paper reason", width="medium"),
             "api_discovery_reason": st.column_config.TextColumn("API discovery reason", width="medium"),
@@ -811,6 +824,7 @@ def render_paper_detail(row: pd.Series) -> None:
     diagnostic_bits: list[tuple[str, str]] = []
     for label, key in [
         ("Reason for tier", "reason_for_tier"),
+        ("Goal fit", "purpose_fit_reason"),
         ("Ranking confidence", "ranking_confidence"),
         ("Why included", "why_included"),
         ("Topic gate reason", "topic_match_reason"),
@@ -993,6 +1007,34 @@ def render_evidence_review(result: dict) -> None:
         st.markdown("**Limitations / uncertainty**")
         for item in review.get("limitations", [])[:10]:
             st.markdown(f"- {item}")
+
+    ai_gap = review.get("ai_gap_synthesis", {}) or {}
+    ai_items = ai_gap.get("items", []) or []
+    if ai_gap.get("status") not in {None, "", "not_requested"}:
+        with st.expander("AI-assisted research gap hypotheses", expanded=bool(ai_items)):
+            status = ai_gap.get("status", "")
+            if status == "generated":
+                st.caption(ai_gap.get("note", "Source-grounded AI gap hypotheses."))
+            else:
+                st.caption(ai_gap.get("note", status))
+            if ai_items:
+                ai_df = pd.DataFrame(ai_items)
+                ai_df["source_ids"] = ai_df["source_ids"].apply(
+                    lambda values: ", ".join(values) if isinstance(values, list) else str(values)
+                )
+                st.dataframe(
+                    ai_df[["gap", "confidence", "suggested_design", "source_ids", "rationale", "limitations"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "gap": st.column_config.TextColumn("Gap hypothesis", width="large"),
+                        "confidence": st.column_config.TextColumn("Confidence", width="small"),
+                        "suggested_design": st.column_config.TextColumn("Suggested design", width="medium"),
+                        "source_ids": st.column_config.TextColumn("Sources", width="small"),
+                        "rationale": st.column_config.TextColumn("Rationale", width="large"),
+                        "limitations": st.column_config.TextColumn("Limitations", width="medium"),
+                    },
+                )
 
     with st.expander("Workflow and prompt pattern adapted from Feynman", expanded=False):
         for item in review.get("workflow", []):

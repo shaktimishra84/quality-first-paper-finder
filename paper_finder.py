@@ -150,6 +150,54 @@ TOPIC_LEVEL_ORDER = {
     "background": 3,
     "noise": 4,
 }
+SEARCH_PURPOSE_KNOWLEDGE = "Learn / teach topic"
+SEARCH_PURPOSE_RESEARCH = "Find research gaps"
+SEARCH_PURPOSE_META_ANALYSIS = "Systematic review pool"
+SEARCH_PURPOSE_DEFAULT = SEARCH_PURPOSE_RESEARCH
+SEARCH_PURPOSE_OPTIONS = [
+    SEARCH_PURPOSE_KNOWLEDGE,
+    SEARCH_PURPOSE_RESEARCH,
+    SEARCH_PURPOSE_META_ANALYSIS,
+]
+SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
+    SEARCH_PURPOSE_KNOWLEDGE: {
+        "candidate_depth": 80,
+        "enrichment_limit": 80,
+        "review_max_sources": 60,
+        "semantic_scholar": False,
+        "ai_gap_analysis": False,
+        "runtime_label": "Usually fastest",
+        "description": "Best for learning, teaching, journal club, or building a clean reading pack.",
+    },
+    SEARCH_PURPOSE_RESEARCH: {
+        "candidate_depth": 130,
+        "enrichment_limit": 120,
+        "review_max_sources": 100,
+        "semantic_scholar": False,
+        "ai_gap_analysis": True,
+        "runtime_label": "Deeper search",
+        "description": "Best for project planning, identifying gaps, and generating study ideas.",
+    },
+    SEARCH_PURPOSE_META_ANALYSIS: {
+        "candidate_depth": 200,
+        "enrichment_limit": 150,
+        "review_max_sources": 200,
+        "semantic_scholar": False,
+        "ai_gap_analysis": False,
+        "runtime_label": "Most exhaustive",
+        "description": "Best for systematic review or meta-analysis screening. Expect a few minutes.",
+    },
+}
+
+
+def search_purpose_config(search_purpose: str) -> dict[str, Any]:
+    config = SEARCH_PURPOSE_PRESETS.get(search_purpose) or SEARCH_PURPOSE_PRESETS[SEARCH_PURPOSE_DEFAULT]
+    return dict(config)
+
+
+def normalized_search_purpose(search_purpose: str) -> str:
+    return search_purpose if search_purpose in SEARCH_PURPOSE_PRESETS else SEARCH_PURPOSE_DEFAULT
+
 
 @functools.lru_cache(maxsize=1)
 def load_topic_profiles() -> tuple[dict[str, Any], ...]:
@@ -232,6 +280,7 @@ class SearchContext:
     comparator: str = ""
     outcome: str = ""
     question_type: str = "General evidence map"
+    search_purpose: str = SEARCH_PURPOSE_DEFAULT
     current_year: int = date.today().year
     gemini_api_key: str = ""
 
@@ -250,6 +299,7 @@ def build_search_layers(
     email: str = "",
     api_key: str = "",
 ) -> list[SearchLayer]:
+    purpose = normalized_search_purpose(context.search_purpose)
     topic = context.topic.strip()
     topic_query = build_topic_query(topic, email=email, api_key=api_key)
     recent_start_year = max(1900, context.current_year - 2)
@@ -306,11 +356,23 @@ def build_search_layers(
         f'("{recent_start_year}"[dp] : "3000"[dp]) AND '
         '(review OR update OR guideline OR statement OR consensus OR trial OR cohort)'
     )
-    broad_retmax = max(candidate_depth, 50)
-    review_retmax = max(20, candidate_depth // 2)
-    focused_retmax = max(25, candidate_depth // 2)
+    if purpose == SEARCH_PURPOSE_KNOWLEDGE:
+        broad_retmax = max(candidate_depth // 2, 50)
+        review_retmax = max(candidate_depth, 80)
+        focused_retmax = max(25, candidate_depth // 3)
+        gap_retmax = max(15, candidate_depth // 4)
+    elif purpose == SEARCH_PURPOSE_META_ANALYSIS:
+        broad_retmax = max(candidate_depth, 200)
+        review_retmax = max(candidate_depth, 120)
+        focused_retmax = max(candidate_depth, 150)
+        gap_retmax = max(50, candidate_depth // 2)
+    else:
+        broad_retmax = max(candidate_depth, 100)
+        review_retmax = max(50, candidate_depth // 2)
+        focused_retmax = max(50, candidate_depth // 2)
+        gap_retmax = max(40, candidate_depth // 2)
 
-    return [
+    layers = [
         SearchLayer(
             name="Broad",
             purpose="Capture the field without ICU-only narrowing before scoring.",
@@ -345,9 +407,20 @@ def build_search_layers(
             name="ICU/gap",
             purpose="Find ICU, local, implementation, subgroup, and future-study gaps.",
             query=f"({topic_query}) AND ({ico_clause}) AND ({gap_clause})",
-            retmax=max(20, candidate_depth // 3),
+            retmax=gap_retmax,
         ),
     ]
+    if purpose == SEARCH_PURPOSE_META_ANALYSIS:
+        layers.insert(
+            0,
+            SearchLayer(
+                name="Screening pool",
+                purpose="Broad candidate pool for systematic-review style title/abstract screening.",
+                query=f"({topic_query})",
+                retmax=max(candidate_depth, 200),
+            ),
+        )
+    return layers
 
 
 def build_topic_query(topic: str, email: str = "", api_key: str = "") -> str:
@@ -398,6 +471,11 @@ def run_quality_first_search(
     progress_callback: Callable[[str, int, int], None] | None = None,
     ncbi_api_key: str = "",
 ) -> dict[str, Any]:
+    context = dataclass_replace(
+        context,
+        search_purpose=normalized_search_purpose(context.search_purpose),
+    )
+    purpose_config = search_purpose_config(context.search_purpose)
     original_topic = context.topic
     expanded_topic = expand_acronyms(original_topic)
     if expanded_topic.strip().lower() != original_topic.strip().lower():
@@ -625,6 +703,12 @@ def run_quality_first_search(
         "mesh_discovered": discovered_mesh,
         "topic_primer_status": primer_status,
         "api_discovery": api_discovery,
+        "search_purpose": context.search_purpose,
+        "search_purpose_config": {
+            key: value
+            for key, value in purpose_config.items()
+            if key in {"description", "runtime_label", "review_max_sources", "ai_gap_analysis"}
+        },
         "question_context": {
             "topic": context.topic,
             "original_topic": original_topic,
@@ -633,9 +717,15 @@ def run_quality_first_search(
             "comparator": context.comparator,
             "outcome": context.outcome,
             "question_type": context.question_type,
+            "search_purpose": context.search_purpose,
         },
     }
-    result["evidence_review"] = build_evidence_review(result)
+    result["evidence_review"] = build_evidence_review(
+        result,
+        max_sources=int(purpose_config.get("review_max_sources", 80)),
+        gemini_key=context.gemini_api_key if purpose_config.get("ai_gap_analysis") else "",
+        generate_ai_gaps=bool(purpose_config.get("ai_gap_analysis")),
+    )
     return result
 
 
@@ -1742,6 +1832,9 @@ def reason_for_tier(paper: dict[str, Any]) -> str:
     if total is not None:
         bits.append(f"final score {int(total)}")
 
+    if paper.get("purpose_fit_reason"):
+        bits.append(f"goal fit: {paper['purpose_fit_reason']}")
+
     penalty_notes = paper.get("penalty_notes", [])
     if penalty_notes:
         bits.append("penalties: " + "; ".join(penalty_notes))
@@ -1774,6 +1867,7 @@ def score_and_classify_paper(
     journal_score = score_journal_quality(paper["quartile"], paper.get("journal", ""))
     citation_score, citation_note = score_citations(paper.get("citation_count"))
     recency_score = score_recency(paper.get("year"), context.current_year)
+    purpose_score, purpose_reason = search_purpose_adjustment(paper, design, context)
 
     concept_bonus, matched_concepts = must_include_boost(paper, context)
     if concept_bonus:
@@ -1783,7 +1877,14 @@ def score_and_classify_paper(
     paper["quartile"] = paper.get("quartile", "")
     penalty_score, penalty_notes = apply_topic_penalties(paper, context)
 
-    base_total = relevance_score + design_score + journal_score + citation_score + recency_score
+    base_total = (
+        relevance_score
+        + design_score
+        + journal_score
+        + citation_score
+        + recency_score
+        + purpose_score
+    )
     total_score = max(0, base_total + penalty_score)
 
     paper["topic_match_gate"] = topic_gate["gate"]
@@ -1800,6 +1901,9 @@ def score_and_classify_paper(
     paper["citation_score"] = citation_score
     paper["citation_strength_score"] = citation_score
     paper["recency_score"] = recency_score
+    paper["purpose_fit_score"] = purpose_score
+    paper["purpose_fit_reason"] = purpose_reason
+    paper["search_purpose"] = normalized_search_purpose(context.search_purpose)
     paper["penalty_score"] = penalty_score
     paper["penalty_notes"] = penalty_notes
     paper["base_score"] = base_total
@@ -2386,6 +2490,85 @@ def recent_high_quality_note(
     return ""
 
 
+def search_purpose_adjustment(
+    paper: dict[str, Any],
+    design: str,
+    context: SearchContext,
+) -> tuple[int, str]:
+    purpose = normalized_search_purpose(context.search_purpose)
+    title = paper.get("title", "").lower()
+    text = f"{title} {paper.get('abstract', '')}".lower()
+    year = paper.get("year") or 0
+    recent = bool(year and context.current_year - year <= 3)
+    direct = paper.get("topic_match_level") in {"direct", "abstract_only"}
+    score = 0
+    reasons: list[str] = []
+
+    if purpose == SEARCH_PURPOSE_KNOWLEDGE:
+        if design in {"Guideline / consensus / society statement", "Systematic review / meta-analysis"}:
+            score += 10
+            reasons.append("learning mode prioritizes guidelines and systematic reviews")
+        elif design in {"Narrative review", "Landmark physiological review"}:
+            score += 8
+            reasons.append("learning mode prioritizes readable review articles")
+        elif design in {"Landmark randomized trial", "Randomized controlled trial"}:
+            score += 4
+            reasons.append("learning mode keeps major trials after review sources")
+        if recent and has_any(title, ["review", "update", "practical", "state of the art"]):
+            score += 3
+            reasons.append("recent practical update")
+        if design in {"Case series / case report", "Experimental / animal / basic science"}:
+            score -= 3
+            reasons.append("learning mode de-emphasizes narrow low-level evidence")
+
+    elif purpose == SEARCH_PURPOSE_META_ANALYSIS:
+        if direct:
+            score += 6
+            reasons.append("screening mode keeps directly matched records high")
+        if design in {
+            "Landmark randomized trial",
+            "Randomized controlled trial",
+            "Diagnostic accuracy study",
+            "Large multicentre prospective cohort",
+            "Large retrospective / database study",
+            "Single-centre observational study",
+            "Case series / case report",
+        }:
+            score += 5
+            reasons.append("screening mode prioritizes primary study designs")
+        elif design in {"Systematic review / meta-analysis", "Guideline / consensus / society statement"}:
+            score += 3
+            reasons.append("screening mode keeps reviews/guidelines as cross-reference sources")
+
+    else:
+        if design in {
+            "Systematic review / meta-analysis",
+            "Guideline / consensus / society statement",
+            "Landmark randomized trial",
+            "Randomized controlled trial",
+        }:
+            score += 8
+            reasons.append("research-gap mode anchors on high-level evidence")
+        elif design in {
+            "Large multicentre prospective cohort",
+            "Large retrospective / database study",
+            "Diagnostic accuracy study",
+        }:
+            score += 5
+            reasons.append("research-gap mode values strong primary evidence")
+        if recent:
+            score += 3
+            reasons.append("recent evidence useful for current gap finding")
+        if has_any(text, GAP_TERMS + ["limitation", "limitations", "future research", "further studies"]):
+            score += 5
+            reasons.append("explicit gap/uncertainty language")
+        if has_any(text, LMIC_TERMS + ["implementation", "feasibility", "external validation"]):
+            score += 3
+            reasons.append("implementation, validation, or LMIC relevance")
+
+    return max(-8, min(15, score)), "; ".join(dict.fromkeys(reasons))
+
+
 def assign_tier(paper: dict[str, Any]) -> str:
     if paper.get("expected_paper_reason"):
         return "Tier 1: Must-read"
@@ -2580,7 +2763,10 @@ def why_included(paper: dict[str, Any]) -> str:
     reasons.append(f"{paper['relevance_score']}/40 relevance")
     reasons.append(paper["study_design"])
     if paper.get("citation_count") is not None:
-        reasons.append(f"{paper['citation_count']} citations from {paper['citation_source']}")
+        reasons.append(
+            f"{paper['citation_count']} citations from "
+            f"{paper.get('citation_source', 'citation source unavailable')}"
+        )
     else:
         reasons.append("citation count unavailable")
     if paper.get("quartile") in {"Q3", "Q4"}:
@@ -2635,7 +2821,7 @@ def apply_evidence_family_ranks(papers: list[dict[str, Any]]) -> None:
                 paper["why_included"] += "; same evidence family as a higher-ranked paper"
 
 
-def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int]:
+def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int]:
     section_order = {
         "Core reading pack": 0,
         "Extended evidence base": 1,
@@ -2646,9 +2832,20 @@ def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int,
     topic_order = TOPIC_LEVEL_ORDER.get(paper.get("topic_match_level", ""), 9)
     mandatory_order = 0 if paper.get("mandatory_review_candidate") else 1
     family_rank = int(paper.get("evidence_family_rank", 1))
+    purpose_score = int(paper.get("purpose_fit_score", 0))
     total = int(paper.get("total_score", 0))
     year = int(paper.get("year") or 0)
-    return (section_order, expected_order, tier_order, topic_order, mandatory_order, family_rank, -total, -year)
+    return (
+        section_order,
+        expected_order,
+        tier_order,
+        topic_order,
+        mandatory_order,
+        family_rank,
+        -purpose_score,
+        -total,
+        -year,
+    )
 
 
 def generate_knowledge_summary(

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from evidence_engine import build_evidence_review, evidence_type_for_paper
+from paper_finder import (
+    SEARCH_PURPOSE_KNOWLEDGE,
+    SEARCH_PURPOSE_META_ANALYSIS,
+    SEARCH_PURPOSE_RESEARCH,
+    search_purpose_config,
+)
 
 
 def test_evidence_type_prefers_existing_study_design() -> None:
@@ -73,13 +79,26 @@ def test_build_evidence_review_groups_high_value_sources() -> None:
         "question_context": {
             "topic": "cerebral venous thrombosis",
             "question_type": "General evidence map",
+            "search_purpose": SEARCH_PURPOSE_RESEARCH,
         },
     }
 
-    review = build_evidence_review(result)
+    review = build_evidence_review(result, generate_ai_gaps=True)
 
     assert review["verification"]["records_reviewed"] == 2
     assert len(review["major_guidelines"]) == 1
     assert len(review["major_randomized_trials"]) == 1
+    assert review["ai_gap_synthesis"]["status"] == "not_configured"
     assert "Citation Verification" in review["markdown"]
     assert "PMID 111" in review["markdown"]
+
+
+def test_search_purpose_presets_are_researcher_facing() -> None:
+    knowledge = search_purpose_config(SEARCH_PURPOSE_KNOWLEDGE)
+    research = search_purpose_config(SEARCH_PURPOSE_RESEARCH)
+    meta = search_purpose_config(SEARCH_PURPOSE_META_ANALYSIS)
+
+    assert knowledge["candidate_depth"] < research["candidate_depth"] < meta["candidate_depth"]
+    assert knowledge["ai_gap_analysis"] is False
+    assert research["ai_gap_analysis"] is True
+    assert "description" in meta
