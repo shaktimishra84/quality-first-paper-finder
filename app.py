@@ -334,15 +334,19 @@ def main() -> None:
             st.warning("Enter a research topic or question.")
             return
         quartile_overrides = load_quartile_file(quartile_file)
-        context = SearchContext(
-            topic=topic.strip(),
-            population=population.strip(),
-            intervention=intervention.strip(),
-            comparator=comparator.strip(),
-            outcome=outcome.strip(),
-            question_type=question_type,
-            gemini_api_key=gemini_api_key,
-        )
+        context_kwargs = {
+            "topic": topic.strip(),
+            "population": population.strip(),
+            "intervention": intervention.strip(),
+            "comparator": comparator.strip(),
+            "outcome": outcome.strip(),
+            "question_type": question_type,
+        }
+        # Streamlit Cloud can briefly hot-reload app.py while retaining an older
+        # imported paper_finder module during deploy.
+        if "gemini_api_key" in getattr(SearchContext, "__dataclass_fields__", {}):
+            context_kwargs["gemini_api_key"] = gemini_api_key
+        context = SearchContext(**context_kwargs)
         with st.status("Searching PubMed in parallel...", expanded=True) as status:
             def report_progress(message: str, completed: int, total: int) -> None:
                 if total:
