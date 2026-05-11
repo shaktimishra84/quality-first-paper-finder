@@ -145,6 +145,7 @@ DISPLAY_COLUMNS = [
     "citation_count",
     "mandatory_review_reason",
     "expected_paper_reason",
+    "api_discovery_reason",
     "verification",
     "why_included",
     "topic_match_reason",
@@ -200,6 +201,7 @@ FULL_COLUMNS = [
     "mandatory_review_candidate",
     "mandatory_review_reason",
     "expected_paper_reason",
+    "api_discovery_reason",
     "topic_match_gate",
     "topic_match_level",
     "topic_match_reason",
@@ -265,7 +267,7 @@ def main() -> None:
 
                 st.markdown("---")
 
-                infra_col_1, infra_col_2, infra_col_3 = st.columns(3)
+                infra_col_1, infra_col_2, infra_col_3, infra_col_4 = st.columns(4)
                 with infra_col_1:
                     email = st.text_input("NCBI email", placeholder="Optional")
                 with infra_col_2:
@@ -287,6 +289,24 @@ def main() -> None:
                     )
                     ncbi_api_key = (api_key_field or secret_api_key or "").strip()
                 with infra_col_3:
+                    secret_gemini_key = ""
+                    try:
+                        secret_gemini_key = str(st.secrets.get("gemini_api_key", "") or "")
+                    except Exception:
+                        secret_gemini_key = ""
+                    gemini_help = (
+                        "Loaded from app secrets (st.secrets['gemini_api_key'])."
+                        if secret_gemini_key
+                        else "Optional. Free at aistudio.google.com/apikey. Generates a topic primer for un-profiled topics."
+                    )
+                    gemini_field = st.text_input(
+                        "Gemini API key",
+                        placeholder="Loaded from app secrets" if secret_gemini_key else "Optional",
+                        type="password",
+                        help=gemini_help,
+                    )
+                    gemini_api_key = (gemini_field or secret_gemini_key or "").strip()
+                with infra_col_4:
                     enrichment_limit = st.slider("Citation enrichment limit", 0, 150, 100, step=10)
 
                 enrich_col_1, enrich_col_2, enrich_col_3 = st.columns(3)
@@ -321,6 +341,7 @@ def main() -> None:
             comparator=comparator.strip(),
             outcome=outcome.strip(),
             question_type=question_type,
+            gemini_api_key=gemini_api_key,
         )
         with st.status("Searching PubMed in parallel...", expanded=True) as status:
             def report_progress(message: str, completed: int, total: int) -> None:
@@ -366,6 +387,7 @@ def main() -> None:
     render_metrics(result, df, topic)
     render_missing_landmarks(result)
     render_errors(result)
+    render_api_discovery(result)
 
     with st.expander("Search layers", expanded=False):
         for layer in result["layers"]:
@@ -429,9 +451,14 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
         chips.append(
             f'<span class="qf-chip qf-chip-amber">Expanded "{original}" → "{expanded}"</span>'
         )
+    primer_status = result.get("topic_primer_status", "")
     if profile:
+        is_primed = bool(profile.get("_primed"))
+        label_prefix = "Topic primer (AI)" if is_primed else "Topic profile"
+        chip_class = "qf-chip-amber" if is_primed else "qf-chip-blue"
         chips.append(
-            f'<span class="qf-chip qf-chip-blue">Topic profile: {profile.get("display_name", profile.get("key", ""))}</span>'
+            f'<span class="qf-chip {chip_class}">{label_prefix}: '
+            f'{profile.get("display_name", profile.get("key", ""))}</span>'
         )
         expected_count = len(profile.get("expected_papers", []))
         if expected_count:
@@ -443,8 +470,16 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
             chips.append(
                 f'<span class="qf-chip qf-chip-amber">{subtopic_count} subtopic gap probes</span>'
             )
+        if is_primed and primer_status == "cached":
+            chips.append('<span class="qf-chip qf-chip-muted">Primer cached this session</span>')
     else:
-        chips.append('<span class="qf-chip qf-chip-muted">Generic topic — no profile loaded</span>')
+        if primer_status == "unavailable":
+            chips.append(
+                '<span class="qf-chip qf-chip-muted">No profile · primer unavailable '
+                '(add Gemini key in Advanced)</span>'
+            )
+        else:
+            chips.append('<span class="qf-chip qf-chip-muted">Generic topic — no profile loaded</span>')
 
     mesh_records = result.get("mesh_discovered", []) or []
     if mesh_records:
@@ -460,6 +495,14 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
             chips.append(
                 f'<span class="qf-chip qf-chip-green">MeSH: {head}{tail} ({synonym_total} synonyms)</span>'
             )
+    api_discovery = result.get("api_discovery", {}) or {}
+    api_pmids = api_discovery.get("pmids", []) or []
+    if api_pmids:
+        related_count = len(api_discovery.get("related_pmids", []) or [])
+        chips.append(
+            f'<span class="qf-chip qf-chip-green">API supervisor: {len(api_pmids)} PMIDs'
+            f'{f" · {related_count} related" if related_count else ""}</span>'
+        )
     st.markdown("".join(chips), unsafe_allow_html=True)
 
     funnel_col, reading_col = st.columns([3, 2])
@@ -515,6 +558,48 @@ def render_errors(result: dict) -> None:
     with st.expander("Source errors", expanded=True):
         for error in errors:
             st.markdown(f'<div class="qf-error">{error}</div>', unsafe_allow_html=True)
+
+
+def render_api_discovery(result: dict) -> None:
+    discovery = result.get("api_discovery", {}) or {}
+    sources = discovery.get("sources", []) or []
+    pmids = discovery.get("pmids", []) or []
+    if not sources and not pmids:
+        return
+
+    with st.expander("API discovery supervisor", expanded=False):
+        st.caption(
+            "Verified candidate PMIDs gathered before scoring from PubMed exact searches, "
+            "Europe PMC, OpenAlex, and PubMed related-article expansion."
+        )
+        c1, c2, c3 = st.columns(3)
+        c1.metric("API PMIDs", len(pmids))
+        c2.metric("Related PMIDs", len(discovery.get("related_pmids", []) or []))
+        c3.metric("API queries", len(sources))
+
+        source_df = pd.DataFrame(sources)
+        if not source_df.empty:
+            if "pmids" in source_df.columns:
+                source_df["pmids"] = source_df["pmids"].apply(
+                    lambda values: ", ".join(str(value) for value in values)
+                    if isinstance(values, list)
+                    else str(values)
+                )
+            show_cols = [col for col in ["source", "count", "query", "pmids"] if col in source_df.columns]
+            st.dataframe(
+                source_df[show_cols],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "source": st.column_config.TextColumn("Source", width="medium"),
+                    "count": st.column_config.NumberColumn("PMIDs", width="small"),
+                    "query": st.column_config.TextColumn("Query / seed", width="large"),
+                    "pmids": st.column_config.TextColumn("PMIDs", width="medium"),
+                },
+            )
+        api_messages = (discovery.get("warnings", []) or []) + (discovery.get("errors", []) or [])
+        for message in api_messages:
+            st.caption(message)
 
 
 def render_empty_source_state(result: dict, df: pd.DataFrame) -> None:
@@ -578,6 +663,7 @@ def render_paper_table(
             "citation_count": st.column_config.NumberColumn("Citations", format="%d", width="small"),
             "mandatory_review_reason": st.column_config.TextColumn("Landmark/review protection", width="medium"),
             "expected_paper_reason": st.column_config.TextColumn("Expected-paper reason", width="medium"),
+            "api_discovery_reason": st.column_config.TextColumn("API discovery reason", width="medium"),
             "verification": st.column_config.TextColumn("Verified by", width="small"),
             "why_included": st.column_config.TextColumn("Why included", width="medium"),
             "topic_match_reason": st.column_config.TextColumn("Topic gate reason", width="medium"),
@@ -721,6 +807,7 @@ def render_paper_detail(row: pd.Series) -> None:
         ("Topic gate reason", "topic_match_reason"),
         ("Landmark/review protection", "mandatory_review_reason"),
         ("Expected-paper reason", "expected_paper_reason"),
+        ("API discovery", "api_discovery_reason"),
         ("Tier cap reason", "tier_cap_reason"),
         ("Gap suggested", "gap_suggested"),
         ("Verified by", "verification"),

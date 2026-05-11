@@ -18,18 +18,22 @@ from typing import Any, Callable
 
 import requests
 
+from topic_primer import TopicPrimer, prime_topic
+
 
 TOPICS_DIR = Path(__file__).resolve().parent / "topics"
 
 
 PUBMED_SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 PUBMED_FETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+PUBMED_LINK_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
 MESH_SEARCH_URL = PUBMED_SEARCH_URL  # same endpoint, db=mesh
 MESH_FETCH_URL = PUBMED_FETCH_URL
 MESH_MAX_DESCRIPTORS = 8
 MESH_MAX_QUERY_CLAUSES = 40
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper"
+EUROPE_PMC_SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 
 REQUEST_TIMEOUT = (5, 12)
 DEFAULT_HEADERS = {
@@ -210,6 +214,8 @@ MAJOR_JOURNAL_TERMS = [
     "jama",
     "bmj",
     "stroke",
+    "european respiratory review",
+    "eur respir rev",
     "journal of thrombosis and haemostasis",
     "j thromb haemost",
     "intensive care medicine",
@@ -226,6 +232,7 @@ class SearchContext:
     outcome: str = ""
     question_type: str = "General evidence map"
     current_year: int = date.today().year
+    gemini_api_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -350,11 +357,25 @@ def build_topic_query(topic: str, email: str = "", api_key: str = "") -> str:
     mesh_clauses = mesh_query_clauses(mesh_records)
     mesh_query = " OR ".join(mesh_clauses)
 
+    expansion_query = ""
+    if profile:
+        expansion_clauses: list[str] = []
+        for raw_term in profile.get("query_expansion_terms", []) or []:
+            term = str(raw_term).strip().replace('"', "")
+            if not term:
+                continue
+            expansion_clauses.append(f'"{term}"[Title/Abstract]')
+            if len(expansion_clauses) >= 15:
+                break
+        expansion_query = " OR ".join(expansion_clauses)
+
     parts: list[str] = []
     if profile_query:
         parts.append(f"({profile_query})")
     if mesh_query:
         parts.append(f"({mesh_query})")
+    if expansion_query:
+        parts.append(f"({expansion_query})")
     if parts:
         return " OR ".join(parts)
 
@@ -381,6 +402,13 @@ def run_quality_first_search(
     if expanded_topic.strip().lower() != original_topic.strip().lower():
         context = dataclass_replace(context, topic=expanded_topic)
 
+    primer_status = register_primer_if_needed(
+        context.topic,
+        gemini_api_key=context.gemini_api_key,
+        email=email,
+        api_key=ncbi_api_key,
+    )
+
     layers = build_search_layers(
         context,
         max_results_per_layer,
@@ -392,6 +420,15 @@ def run_quality_first_search(
     errors: list[str] = []
     automatically_retrieved_pmids: set[str] = set()
     expected_papers = expected_papers_for_topic(context.topic)
+    api_discovery: dict[str, Any] = {
+        "pmids": [],
+        "related_pmids": [],
+        "sources": [],
+        "errors": [],
+        "warnings": [],
+        "pmid_layers": {},
+        "pmid_reasons": {},
+    }
 
     def _notify(message: str, completed: int, total: int) -> None:
         if progress_callback is None:
@@ -441,6 +478,41 @@ def run_quality_first_search(
                     total_layers,
                 )
 
+    _notify("Running API discovery supervisor", total_layers, total_layers)
+    try:
+        api_discovery = run_api_discovery_supervisor(
+            context,
+            email=email,
+            ncbi_api_key=ncbi_api_key,
+            per_query_limit=max(10, min(25, max_results_per_layer // 3)),
+        )
+        api_pmids = list(api_discovery.get("pmids", []))
+        if api_pmids:
+            api_records = fetch_pubmed_records(
+                api_pmids,
+                email=email,
+                api_key=ncbi_api_key,
+            )
+            api_layers = api_discovery.get("pmid_layers", {})
+            api_reasons = api_discovery.get("pmid_reasons", {})
+            for paper in api_records:
+                pmid = str(paper.get("pmid", ""))
+                paper["search_layers"] = api_layers.get(pmid) or ["API discovery supervisor"]
+                paper["search_origin"] = "API discovery supervisor"
+                paper["source_records"] = ["PMID", "API supervisor"]
+                paper["api_discovery_reason"] = "; ".join(api_reasons.get(pmid, []))
+            all_papers.extend(api_records)
+            automatically_retrieved_pmids.update(api_pmids)
+            _notify(
+                f"API discovery found {len(api_pmids)} verified PubMed candidates",
+                total_layers,
+                total_layers,
+            )
+    except requests.RequestException as exc:
+        api_discovery.setdefault("errors", []).append(f"API discovery failed: {friendly_request_error(exc)}")
+    except ET.ParseError as exc:
+        api_discovery.setdefault("errors", []).append(f"API discovery PubMed XML parsing failed: {exc}")
+
     recovered_expected: list[dict[str, str]] = []
     if expected_papers:
         expected_pmids = [item["pmid"] for item in expected_papers]
@@ -448,7 +520,11 @@ def run_quality_first_search(
             item for item in expected_papers if item["pmid"] not in automatically_retrieved_pmids
         ]
         try:
-            expected_records = fetch_pubmed_records(expected_pmids, email=email)
+            expected_records = fetch_pubmed_records(
+                expected_pmids,
+                email=email,
+                api_key=ncbi_api_key,
+            )
             for paper in expected_records:
                 paper["search_layers"] = ["Expected landmark seed"]
                 paper["search_origin"] = "PubMed expected-paper sanity seed"
@@ -542,6 +618,8 @@ def run_quality_first_search(
         "topic_original": original_topic,
         "topic_expanded": context.topic if context.topic.strip().lower() != original_topic.strip().lower() else "",
         "mesh_discovered": discovered_mesh,
+        "topic_primer_status": primer_status,
+        "api_discovery": api_discovery,
     }
 
 
@@ -550,6 +628,278 @@ def expected_papers_for_topic(topic: str) -> list[dict[str, str]]:
     if not profile:
         return []
     return [dict(item) for item in profile.get("expected_papers", [])]
+
+
+def run_api_discovery_supervisor(
+    context: SearchContext,
+    email: str = "",
+    ncbi_api_key: str = "",
+    per_query_limit: int = 15,
+) -> dict[str, Any]:
+    """Use public scholarly APIs as a retrieval supervisor before scoring.
+
+    The supervisor does not admit unverified citations. It gathers candidate
+    PMIDs from narrow PubMed searches, Europe PMC, OpenAlex, and PubMed related
+    articles, then the main pipeline fetches the actual PubMed records.
+    """
+    pmids: list[str] = []
+    pmid_layers: dict[str, list[str]] = defaultdict(list)
+    pmid_reasons: dict[str, list[str]] = defaultdict(list)
+    sources: list[dict[str, Any]] = []
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    def add_pmids(found_pmids: list[str], layer: str, query: str, reason: str) -> None:
+        clean_pmids = []
+        for pmid in found_pmids:
+            normalized = normalize_pmid(pmid)
+            if not normalized:
+                continue
+            clean_pmids.append(normalized)
+            if normalized not in pmids:
+                pmids.append(normalized)
+            if layer not in pmid_layers[normalized]:
+                pmid_layers[normalized].append(layer)
+            if reason and reason not in pmid_reasons[normalized]:
+                pmid_reasons[normalized].append(reason)
+        sources.append(
+            {
+                "source": layer,
+                "query": query,
+                "count": len(dict.fromkeys(clean_pmids)),
+                "pmids": list(dict.fromkeys(clean_pmids))[:25],
+            }
+        )
+
+    for layer_name, query, retmax, reason in api_supervisor_pubmed_queries(context, per_query_limit):
+        try:
+            found = search_pubmed(query, retmax, email=email, api_key=ncbi_api_key)
+            add_pmids(found, layer_name, query, reason)
+        except requests.RequestException as exc:
+            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+
+    for layer_name, query, page_size, reason in api_supervisor_europe_pmc_queries(context, per_query_limit):
+        try:
+            found = search_europe_pmc_pmids(query, page_size=page_size)
+            add_pmids(found, layer_name, query, reason)
+        except requests.RequestException as exc:
+            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+
+    for layer_name, query, page_size, reason in api_supervisor_openalex_queries(context, per_query_limit):
+        try:
+            found = search_openalex_pmids(query, per_page=page_size, email=email)
+            add_pmids(found, layer_name, query, reason)
+        except requests.RequestException as exc:
+            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+
+    related_seed_pmids = pmids[:3]
+    related_pmids: list[str] = []
+    if related_seed_pmids:
+        try:
+            related_pmids = pubmed_related_pmids(
+                related_seed_pmids,
+                retmax=max(20, per_query_limit),
+                email=email,
+                api_key=ncbi_api_key,
+            )
+            add_pmids(
+                related_pmids,
+                "API supervisor - PubMed related",
+                ", ".join(related_seed_pmids),
+                "PubMed related-article expansion from API-discovered seed papers",
+            )
+        except requests.RequestException as exc:
+            warnings.append(f"API supervisor - PubMed related skipped: {friendly_request_error(exc)}")
+        except ET.ParseError as exc:
+            warnings.append(f"API supervisor - PubMed related XML parsing skipped: {exc}")
+
+    return {
+        "pmids": pmids[:200],
+        "related_pmids": related_pmids[:100],
+        "sources": sources,
+        "errors": errors,
+        "warnings": warnings,
+        "pmid_layers": {pmid: layers for pmid, layers in pmid_layers.items()},
+        "pmid_reasons": {pmid: reasons for pmid, reasons in pmid_reasons.items()},
+    }
+
+
+def api_supervisor_pubmed_queries(
+    context: SearchContext,
+    per_query_limit: int,
+) -> list[tuple[str, str, int, str]]:
+    phrase = normalize_space(context.topic)
+    quoted_phrase = pubmed_quote(phrase)
+    concept_query = api_supervisor_concept_query(context, field="Title/Abstract")
+    recent_start_year = max(1900, context.current_year - 2)
+    review_terms = (
+        'review[Publication Type] OR review OR "clinical review" OR '
+        '"comprehensive review" OR "state of the art" OR update OR primer OR seminar'
+    )
+    queries: list[tuple[str, str, int, str]] = []
+    if quoted_phrase:
+        queries.append(
+            (
+                "API supervisor - PubMed exact",
+                f'"{quoted_phrase}"[Title] OR "{quoted_phrase}"[Title/Abstract]',
+                max(5, per_query_limit),
+                "Exact title/topic phrase search",
+            )
+        )
+    if concept_query:
+        queries.append(
+            (
+                "API supervisor - PubMed focused review",
+                f"({concept_query}) AND ({review_terms})",
+                per_query_limit,
+                "Focused review/update search from topic concepts",
+            )
+        )
+        queries.append(
+            (
+                "API supervisor - PubMed recent focused",
+                f"({concept_query}) AND (\"{recent_start_year}\"[dp] : \"3000\"[dp])",
+                per_query_limit,
+                "Recent focused-topic search from topic concepts",
+            )
+        )
+    return queries
+
+
+def api_supervisor_europe_pmc_queries(
+    context: SearchContext,
+    per_query_limit: int,
+) -> list[tuple[str, str, int, str]]:
+    phrase = normalize_space(context.topic)
+    keyword_query = " ".join(api_supervisor_keywords(context)[:8])
+    queries: list[tuple[str, str, int, str]] = []
+    if phrase:
+        queries.append(
+            (
+                "API supervisor - Europe PMC exact",
+                f'"{phrase}"',
+                max(5, per_query_limit),
+                "Europe PMC exact phrase search",
+            )
+        )
+    if keyword_query:
+        queries.append(
+            (
+                "API supervisor - Europe PMC recent review",
+                f"{keyword_query} review sort_date:y",
+                per_query_limit,
+                "Europe PMC recent review search",
+            )
+        )
+    return queries
+
+
+def api_supervisor_openalex_queries(
+    context: SearchContext,
+    per_query_limit: int,
+) -> list[tuple[str, str, int, str]]:
+    phrase = normalize_space(context.topic)
+    keyword_query = " ".join(api_supervisor_keywords(context)[:8])
+    queries: list[tuple[str, str, int, str]] = []
+    if phrase:
+        queries.append(
+            (
+                "API supervisor - OpenAlex exact",
+                phrase,
+                max(5, per_query_limit),
+                "OpenAlex title/abstract/full-text search",
+            )
+        )
+    if keyword_query and keyword_query.lower() != phrase.lower():
+        queries.append(
+            (
+                "API supervisor - OpenAlex concept",
+                keyword_query,
+                per_query_limit,
+                "OpenAlex concept search from topic keywords",
+            )
+        )
+    return queries
+
+
+def api_supervisor_concept_query(context: SearchContext, field: str = "Title/Abstract") -> str:
+    keywords_for_query = api_supervisor_keywords(context)
+    if not keywords_for_query:
+        return ""
+    clauses = []
+    phrase = normalize_space(context.topic)
+    if len(phrase.split()) >= 3:
+        clauses.append(f'"{pubmed_quote(phrase)}"[{field}]')
+    for term in keywords_for_query[:8]:
+        clauses.append(pubmed_term_clause(term, field))
+    # Exact phrase OR all core terms. The phrase catches titles; the AND chain
+    # catches near-misses with morphology or reordered terms.
+    if len(clauses) == 1:
+        return clauses[0]
+    and_terms = " AND ".join(clauses[1:])
+    return f"({clauses[0]}) OR ({and_terms})" if and_terms else clauses[0]
+
+
+def api_supervisor_keywords(context: SearchContext) -> list[str]:
+    topic = normalize_space(context.topic)
+    profile = topic_profile(topic)
+    raw_terms: list[str] = []
+    if profile:
+        raw_terms.extend(str(term) for term in profile.get("query_expansion_terms", [])[:6])
+        raw_terms.extend(str(term) for term in profile.get("must_include_concepts", [])[:6])
+    raw_terms.extend(keywords(topic))
+    raw_terms.extend(keywords(context.population))
+    raw_terms.extend(keywords(context.outcome))
+
+    weak_terms = {
+        "effect",
+        "effects",
+        "impact",
+        "management",
+        "treatment",
+        "therapy",
+        "review",
+        "clinical",
+        "study",
+        "analysis",
+        "outcome",
+        "outcomes",
+    }
+    out: list[str] = []
+    seen: set[str] = set()
+    for term in raw_terms:
+        cleaned = normalize_space(str(term).lower())
+        if not cleaned or cleaned in weak_terms or len(cleaned) < 3:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+        if len(out) >= 12:
+            break
+    return out
+
+
+def pubmed_quote(text: str) -> str:
+    return normalize_space(text).replace('"', "")
+
+
+def pubmed_term_clause(term: str, field: str) -> str:
+    cleaned = pubmed_quote(term)
+    if not cleaned:
+        return ""
+    if " " in cleaned or "-" in cleaned:
+        return f'"{cleaned}"[{field}]'
+    if len(cleaned) >= 5:
+        return f"{cleaned}*[{field}]"
+    return f'"{cleaned}"[{field}]'
+
+
+def normalize_pmid(value: str | int | None) -> str:
+    if value is None:
+        return ""
+    match = re.search(r"\b\d{5,10}\b", str(value))
+    return match.group(0) if match else ""
 
 
 def missing_expected_papers(
@@ -688,6 +1038,135 @@ def search_pubmed(query: str, retmax: int, email: str = "", api_key: str = "") -
     return list(_cached_search_pubmed(query, retmax, (email or "").strip(), (api_key or "").strip()))
 
 
+@functools.lru_cache(maxsize=256)
+def _cached_search_europe_pmc_pmids(query: str, page_size: int) -> tuple[str, ...]:
+    params = {
+        "query": query,
+        "format": "json",
+        "resultType": "core",
+        "pageSize": str(page_size),
+    }
+    response = requests.get(
+        EUROPE_PMC_SEARCH_URL,
+        params=params,
+        headers=DEFAULT_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    results = payload.get("resultList", {}).get("result", [])
+    pmids: list[str] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        pmid = normalize_pmid(item.get("pmid") or item.get("id"))
+        source = str(item.get("source") or "").upper()
+        if pmid and (source in {"MED", "PMC", ""} or item.get("pmid")):
+            pmids.append(pmid)
+    return tuple(dict.fromkeys(pmids))
+
+
+def search_europe_pmc_pmids(query: str, page_size: int = 15) -> list[str]:
+    return list(_cached_search_europe_pmc_pmids(query.strip(), max(1, min(page_size, 100))))
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_search_openalex_pmids(query: str, per_page: int, email: str) -> tuple[str, ...]:
+    params = {
+        "search": query,
+        "filter": "has_pmid:true",
+        "per-page": str(per_page),
+    }
+    if email:
+        params["mailto"] = email
+    response = requests.get(
+        OPENALEX_WORKS_URL,
+        params=params,
+        headers=DEFAULT_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    results = response.json().get("results", [])
+    pmids: list[str] = []
+    for work in results:
+        if not isinstance(work, dict):
+            continue
+        ids = work.get("ids") or {}
+        pmid = normalize_pmid(ids.get("pmid") or "")
+        if pmid:
+            pmids.append(pmid)
+    return tuple(dict.fromkeys(pmids))
+
+
+def search_openalex_pmids(query: str, per_page: int = 15, email: str = "") -> list[str]:
+    return list(
+        _cached_search_openalex_pmids(
+            query.strip(),
+            max(1, min(per_page, 50)),
+            (email or "").strip(),
+        )
+    )
+
+
+@functools.lru_cache(maxsize=128)
+def _cached_pubmed_related_pmids(
+    pmids_key: tuple[str, ...], retmax: int, email: str, api_key: str
+) -> tuple[str, ...]:
+    params = {
+        "dbfrom": "pubmed",
+        "db": "pubmed",
+        "id": ",".join(pmids_key),
+        "cmd": "neighbor_score",
+        "retmode": "xml",
+        "retmax": str(retmax),
+        "tool": "quality_first_paper_finder",
+    }
+    if email:
+        params["email"] = email
+    if api_key:
+        params["api_key"] = api_key
+    response = requests.get(
+        PUBMED_LINK_URL,
+        params=params,
+        headers=DEFAULT_HEADERS,
+        timeout=(3, 5),
+    )
+    response.raise_for_status()
+    root = ET.fromstring(response.text)
+    related: list[str] = []
+    seed_set = set(pmids_key)
+    for linkset_db in root.findall(".//LinkSetDb"):
+        linkname = text_of(linkset_db.find("./LinkName"))
+        if "pubmed_pubmed" not in linkname:
+            continue
+        for link in linkset_db.findall("./Link/Id"):
+            pmid = normalize_pmid(text_of(link))
+            if pmid and pmid not in seed_set:
+                related.append(pmid)
+    if not related:
+        for link in root.findall(".//Link/Id"):
+            pmid = normalize_pmid(text_of(link))
+            if pmid and pmid not in seed_set:
+                related.append(pmid)
+    return tuple(dict.fromkeys(related))
+
+
+def pubmed_related_pmids(
+    pmids: list[str], retmax: int = 20, email: str = "", api_key: str = ""
+) -> list[str]:
+    clean_pmids = tuple(dict.fromkeys(normalize_pmid(pmid) for pmid in pmids if normalize_pmid(pmid)))
+    if not clean_pmids:
+        return []
+    return list(
+        _cached_pubmed_related_pmids(
+            clean_pmids,
+            max(1, min(retmax, 100)),
+            (email or "").strip(),
+            (api_key or "").strip(),
+        )
+    )
+
+
 @functools.lru_cache(maxsize=128)
 def _cached_fetch_pubmed_records(
     pmids_key: tuple[str, ...], email: str, api_key: str
@@ -721,6 +1200,9 @@ def clear_pubmed_caches() -> None:
     _cached_fetch_pubmed_records.cache_clear()
     _cached_discover_mesh.cache_clear()
     _cached_pubmed_translation.cache_clear()
+    _cached_search_europe_pmc_pmids.cache_clear()
+    _cached_search_openalex_pmids.cache_clear()
+    _cached_pubmed_related_pmids.cache_clear()
 
 
 @functools.lru_cache(maxsize=128)
@@ -1022,6 +1504,14 @@ def deduplicate_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
             existing["source_records"] = sorted(existing_sources)
             if paper.get("expected_paper_reason") and not existing.get("expected_paper_reason"):
                 existing["expected_paper_reason"] = paper["expected_paper_reason"]
+            if paper.get("api_discovery_reason"):
+                existing_reason = existing.get("api_discovery_reason", "")
+                pieces = [
+                    part.strip()
+                    for part in f"{existing_reason}; {paper['api_discovery_reason']}".split(";")
+                    if part.strip()
+                ]
+                existing["api_discovery_reason"] = "; ".join(dict.fromkeys(pieces))
             continue
         merged.append(paper)
         for key in keys:
@@ -1383,14 +1873,26 @@ def major_review_protection(
     )
     discovery_signal = any(
         layer in search_layers
-        for layer in ["review/guideline", "landmark/classic", "expected landmark seed"]
+        for layer in [
+            "review/guideline",
+            "landmark/classic",
+            "expected landmark seed",
+            "api supervisor",
+        ]
     )
     landmark_discovery = any(
         layer in search_layers for layer in ["landmark/classic", "expected landmark seed"]
     )
+    api_discovery = "api supervisor" in search_layers
     recent_comprehensive = (
         bool(paper.get("year") and context.current_year - paper["year"] <= 3)
         and strong_review_signal
+    )
+    recent_api_review = (
+        api_discovery
+        and bool(paper.get("year") and context.current_year - paper["year"] <= 3)
+        and review_like
+        and direct_or_seed
     )
 
     reasons = []
@@ -1404,6 +1906,8 @@ def major_review_protection(
         reasons.append("recent comprehensive/update review")
     if discovery_signal:
         reasons.append("found in mandatory review/guideline/landmark discovery layer")
+    if api_discovery:
+        reasons.append("found by API discovery supervisor")
     if title_signal and direct_or_seed:
         reasons.append("clearly focused review/update title")
 
@@ -1416,6 +1920,7 @@ def major_review_protection(
         or bool(paper.get("expected_paper_reason"))
         or major_journal
         or recent_comprehensive
+        or recent_api_review
         or (landmark_discovery and strong_review_signal)
     )
     candidate = bool(review_like and direct_or_seed and reasons and high_confidence_review)
@@ -1597,7 +2102,21 @@ def topic_gate(
     }
 
 
+_PRIMED_PROFILES: dict[str, dict[str, Any]] = {}
+
+
+def _normalize_topic_key(topic: str) -> str:
+    return re.sub(r"\s+", " ", topic or "").strip().lower()
+
+
 def topic_profile(topic: str) -> dict[str, Any] | None:
+    """Return the topic profile for `topic`.
+
+    Hand-authored JSON profiles in topics/*.json take precedence over LLM-
+    generated primers. The primed profile is a drop-in replacement with the
+    same shape (triggers, expected_papers, must_include_concepts, penalize,
+    plus an extra query_expansion_terms field).
+    """
     topic_text = normalize_space(topic).lower()
     if not topic_text:
         return None
@@ -1605,7 +2124,43 @@ def topic_profile(topic: str) -> dict[str, Any] | None:
         triggers = profile.get("triggers", [])
         if any(trigger and trigger in topic_text for trigger in triggers):
             return profile
-    return None
+    return _PRIMED_PROFILES.get(_normalize_topic_key(topic))
+
+
+def register_primer_if_needed(
+    topic: str,
+    gemini_api_key: str,
+    email: str = "",
+    api_key: str = "",
+) -> str:
+    """Ensure a profile exists for `topic`. Returns one of:
+
+    - 'profile'      — hand-authored topics/*.json profile matched
+    - 'cached'       — primer already cached in this process
+    - 'generated'    — primer just generated and registered
+    - 'unavailable'  — no profile, no key, or LLM call failed
+    """
+    if not topic.strip():
+        return "unavailable"
+
+    topic_text = normalize_space(topic).lower()
+    for profile in load_topic_profiles():
+        triggers = profile.get("triggers", [])
+        if any(trigger and trigger in topic_text for trigger in triggers):
+            return "profile"
+
+    if not gemini_api_key:
+        return "unavailable"
+
+    cache_key = _normalize_topic_key(topic)
+    if cache_key in _PRIMED_PROFILES:
+        return "cached"
+
+    primer = prime_topic(topic, gemini_api_key, email=email, api_key=api_key)
+    if primer is None:
+        return "unavailable"
+    _PRIMED_PROFILES[cache_key] = primer.to_profile_dict()
+    return "generated"
 
 
 def has_contextual_acronym(text: str, acronym: str, context_terms: list[str]) -> bool:

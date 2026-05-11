@@ -8,6 +8,7 @@ The app builds an ICU literature knowledge base by searching broadly, admitting 
 
 - Generates broad, focused, review/guideline, landmark/classic, recent-update, and gap PubMed searches from a topic or PICO question.
 - Uses a mandatory expected-paper sanity layer for topics with known sentinel papers, starting with cerebral venous thrombosis.
+- Runs an API discovery supervisor before scoring: narrow PubMed exact/focused searches, Europe PMC, OpenAlex PMID discovery, and optional PubMed related-article expansion.
 - Admits only papers with a verifiable PMID, DOI, PubMed link, OpenAlex record, or Semantic Scholar record.
 - Enriches accepted records with OpenAlex citation counts and optional Semantic Scholar cross-checks.
 - Lets citation enrichment scale up to the retrieved candidate set while keeping it optional.
@@ -57,6 +58,7 @@ If no verified quartile is provided, the app records `quartile not verified` and
 - No guessed PMIDs, DOIs, citation counts, journal quartiles, or conclusions.
 - Google Scholar notes are stored for cross-checking only; they do not create accepted papers.
 - For supported topics, expected landmark papers are fetched by PMID and reported if still missing.
+- API-discovered papers are admitted only after PMID verification/fetch from PubMed.
 - Recent high-quality papers are protected from being unfairly penalized for immature citation counts.
 - Related papers are tagged into evidence families so duplicate trial/database outputs do not silently dominate.
 
