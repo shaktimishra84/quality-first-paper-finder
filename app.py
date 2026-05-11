@@ -527,6 +527,14 @@ def chip(label: object, cls: str = "qf-chip-muted") -> str:
     return f'<span class="qf-chip {cls}">{e(text)}</span>'
 
 
+def compact_html(markup: str) -> str:
+    return " ".join(line.strip() for line in markup.splitlines() if line.strip())
+
+
+def render_html(markup: str) -> None:
+    st.html(compact_html(markup))
+
+
 TIER_META = {
     1: ("t1", "Must-read"),
     2: ("t2", "Useful"),
@@ -636,11 +644,11 @@ def render_mini_stats(items: list[tuple[str, object, str]]) -> None:
             </div>
             """
         )
-    st.markdown(f'<div class="mini-stats">{"".join(cards)}</div>', unsafe_allow_html=True)
+    render_html(f'<div class="mini-stats">{"".join(cards)}</div>')
 
 
 def render_app_header() -> None:
-    st.markdown(
+    render_html(
         """
         <div class="page-head">
           <div class="eyebrow">Verified medical literature search</div>
@@ -650,8 +658,7 @@ def render_app_header() -> None:
             with landmark recovery, citation checks, evidence hierarchy, and transparent tiering.
           </p>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -659,22 +666,20 @@ def render_mode_hint(search_purpose: str) -> None:
     copy = SEARCH_MODE_UI_COPY.get(search_purpose, {})
     label = copy.get("label") or ""
     keeps = copy.get("keeps") or ""
-    st.markdown(
+    render_html(
         f'<div class="rail-copy">{e(label)} {e(keeps)}</div>',
-        unsafe_allow_html=True,
     )
 
 
 def render_sidebar_intro() -> None:
-    st.markdown(
+    render_html(
         """
         <div class="rail-card">
           <div class="rail-kicker">CorePapers</div>
           <div class="rail-title">Build a focused evidence set</div>
           <div class="rail-copy">Choose the purpose first. The app adjusts retrieval depth, tiering, and output sections automatically.</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -721,15 +726,14 @@ def main() -> None:
                 height=88,
             )
 
-        st.markdown(
+        render_html(
             f"""
             <div class="rail-card">
               <div class="rail-kicker">Live summary</div>
               <div class="rail-copy"><strong>Mode:</strong> {e(search_purpose)}</div>
               <div class="rail-copy"><strong>Focus:</strong> {e(SEARCH_MODE_UI_COPY.get(search_purpose, {}).get("label", ""))}</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
         submitted = st.button("Run evidence search", type="primary", use_container_width=True)
@@ -883,7 +887,7 @@ def main() -> None:
 
 
 def render_start_state() -> None:
-    st.markdown(
+    render_html(
         """
         <div class="empty-panel">
           <div class="empty-title">Start with a clinical topic or PICO question.</div>
@@ -892,8 +896,7 @@ def render_start_state() -> None:
             and tier logic for learning, research-gap work, exhaustive screening, or rare case finding.
           </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -957,7 +960,7 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
         related = f", {related_count} related" if related_count else ""
         chips.append(context_chip(f"API supervisor: {len(api_pmids)} PMIDs{related}", "accent"))
 
-    st.markdown(
+    render_html(
         f"""
         <div class="context-card">
           <div class="context-top">
@@ -969,8 +972,7 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
           </div>
           <div class="chip-row">{"".join(chips)}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -987,7 +989,7 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
     missing_delta = "sanity check clear" if missing_expected == 0 else "needs manual add"
     if rejected:
         st.caption(f"{rejected} unverified records were excluded.")
-    st.markdown(
+    render_html(
         f"""
         <div class="funnel">
           <div class="funnel-flow">
@@ -1027,8 +1029,7 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
             <span>{confidence}%</span>
           </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -1053,7 +1054,7 @@ def render_errors(result: dict) -> None:
         return
     with st.expander("Source errors", expanded=True):
         for error in errors:
-            st.markdown(f'<div class="qf-error">{error}</div>', unsafe_allow_html=True)
+            render_html(f'<div class="qf-error">{e(error)}</div>')
 
 
 def render_api_discovery(result: dict) -> None:
@@ -1114,14 +1115,13 @@ def render_empty_source_state(result: dict, df: pd.DataFrame) -> None:
     else:
         title = "No verified papers were returned."
         body = "Broaden the topic, try Deep Search, or add known landmark titles in manual notes."
-    st.markdown(
+    render_html(
         f"""
         <div class="empty-panel">
           <div class="empty-title">{e(title)}</div>
           <div class="empty-body">{e(body)}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -1146,10 +1146,7 @@ def render_paper_table(
                 "Tier filter", tier_options, default=tier_options, key=f"{key}_tier_filter"
             )
         with count_col:
-            st.markdown(
-                f'<div class="qf-section-caption">{len(table_df)} records</div>',
-                unsafe_allow_html=True,
-            )
+            render_html(f'<div class="qf-section-caption">{len(table_df)} records</div>')
         filtered = table_df[table_df["tier"].isin(selected_tiers)] if selected_tiers else table_df
 
     rows_html: list[str] = []
@@ -1201,7 +1198,7 @@ def render_paper_table(
             """
         )
 
-    st.markdown(
+    render_html(
         f"""
         <div class="table-wrap">
           <table class="papers-table">
@@ -1219,8 +1216,7 @@ def render_paper_table(
             <tbody>{"".join(rows_html)}</tbody>
           </table>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -1260,7 +1256,7 @@ def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) 
 def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
     if full_df.empty:
         return
-    st.markdown('<div class="section-kicker">Top ranked papers</div>', unsafe_allow_html=True)
+    render_html('<div class="section-kicker">Top ranked papers</div>')
     cards: list[str] = []
     for rank, (_, row) in enumerate(full_df.head(limit).iterrows(), start=1):
         title = short_text(row.get("title", "(untitled)"), 190) or "(untitled)"
@@ -1298,7 +1294,7 @@ def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
             </div>
             """
         )
-    st.markdown(f'<div class="top-papers">{"".join(cards)}</div>', unsafe_allow_html=True)
+    render_html(f'<div class="top-papers">{"".join(cards)}</div>')
 
 
 def render_section_overview(df: pd.DataFrame, ordered_sections: list[str]) -> None:
@@ -1326,8 +1322,8 @@ def render_section_overview(df: pd.DataFrame, ordered_sections: list[str]) -> No
             """
         )
     if tiles:
-        st.markdown('<div class="qf-section-caption">Section overview</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="qf-section-grid">{"".join(tiles)}</div>', unsafe_allow_html=True)
+        render_html('<div class="qf-section-caption">Section overview</div>')
+        render_html(f'<div class="qf-section-grid">{"".join(tiles)}</div>')
 
 
 def section_order_for_mode(search_mode: str) -> list[str]:
@@ -1377,7 +1373,7 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
     if coverage:
         covered = sum(1 for c in coverage if c.get("covered"))
         total = len(coverage)
-        st.markdown('<div class="qf-section-caption">Subtopic coverage</div>', unsafe_allow_html=True)
+        render_html('<div class="qf-section-caption">Subtopic coverage</div>')
         st.caption(f"{covered}/{total} subtopics from the topic profile have at least one matching paper.")
         chips: list[str] = []
         for item in coverage:
@@ -1386,7 +1382,7 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
             chips.append(
                 chip(f'{mark}: {item.get("name", "")}', cls)
             )
-        st.markdown("".join(chips), unsafe_allow_html=True)
+        render_html("".join(chips))
         st.markdown("---")
 
     if not gaps:
@@ -1396,7 +1392,7 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
     priority_order = {"High": 0, "Medium": 1, "Low": 2, "": 3}
     sorted_gaps = sorted(gaps, key=lambda g: priority_order.get(g.get("Priority", ""), 3))
 
-    st.markdown('<div class="qf-section-caption">Gap signals</div>', unsafe_allow_html=True)
+    render_html('<div class="qf-section-caption">Gap signals</div>')
     st.caption(f"{len(sorted_gaps)} gap signal(s). Subtopic gaps appear when the profile defines them and no matching paper was found.")
 
     for gap in sorted_gaps:
@@ -1418,7 +1414,7 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
             chips.append(chip(f"Priority: {priority}", priority_class))
         if feasibility:
             chips.append(chip(f"Feasibility: {feasibility}", "qf-chip-muted"))
-        st.markdown(
+        render_html(
             f"""
             <div class="qf-detail">
               <div style="margin-bottom: 0.45rem;">{''.join(chips)}</div>
@@ -1426,8 +1422,7 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
               <div style="opacity: 0.85; margin-bottom: 0.4rem;">{e(why)}</div>
               <div style="opacity: 0.7; font-size: 0.88rem;"><strong>Best study design:</strong> {e(design)}</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
 
@@ -1466,7 +1461,7 @@ def render_paper_detail(row: pd.Series) -> None:
     if citations is not None and not pd.isna(citations):
         chips.append(chip(f"{int(citations)} citations", "qf-chip-muted"))
 
-    st.markdown(
+    render_html(
         f"""
         <div class="qf-detail">
           <h4>{e(title)}</h4>
@@ -1474,8 +1469,7 @@ def render_paper_detail(row: pd.Series) -> None:
           <div style="margin-bottom: 0.6rem;">{''.join(chips)}</div>
           <div style="opacity: 0.85; font-size: 0.9rem; margin-bottom: 0.5rem;">{e(authors)}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
     if has_text(abstract):
         st.markdown("**Abstract**")
@@ -1593,7 +1587,7 @@ def render_evidence_review(result: dict) -> None:
             ]
         ].copy()
         top_display["year"] = pd.to_numeric(top_display["year"], errors="coerce").astype("Int64")
-        st.markdown('<div class="qf-section-caption">Top relevant papers</div>', unsafe_allow_html=True)
+        render_html('<div class="qf-section-caption">Top relevant papers</div>')
         st.dataframe(
             top_display,
             use_container_width=True,
@@ -1614,7 +1608,7 @@ def render_evidence_review(result: dict) -> None:
     else:
         st.info("No review-eligible sources were admitted.")
 
-    st.markdown('<div class="qf-section-caption">Major evidence buckets</div>', unsafe_allow_html=True)
+    render_html('<div class="qf-section-caption">Major evidence buckets</div>')
     bucket_cols = st.columns(3)
     buckets = [
         ("Guidelines", review.get("major_guidelines", [])),
@@ -1634,7 +1628,7 @@ def render_evidence_review(result: dict) -> None:
         hierarchy_df["example_sources"] = hierarchy_df["example_sources"].apply(
             lambda values: ", ".join(values) if isinstance(values, list) else str(values)
         )
-        st.markdown('<div class="qf-section-caption">Evidence hierarchy</div>', unsafe_allow_html=True)
+        render_html('<div class="qf-section-caption">Evidence hierarchy</div>')
         st.dataframe(
             hierarchy_df[["hierarchy_rank", "evidence_type", "count", "example_sources"]],
             use_container_width=True,
