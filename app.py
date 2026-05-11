@@ -25,37 +25,65 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 	    :root {
-	        --qf-blue:    #60A5FA;
-	        --qf-cyan:    #22D3EE;
-	        --qf-red:     #F87171;
-	        --qf-amber:   #FBBF24;
-	        --qf-green:   #34D399;
-	        --qf-violet:  #A78BFA;
-	        --qf-tier-1:  #FBBF24;
-	        --qf-tier-2:  #60A5FA;
-	        --qf-tier-3:  #94A3B8;
+	        --qf-blue:    #2563EB;
+	        --qf-cyan:    #0891B2;
+	        --qf-red:     #DC2626;
+	        --qf-amber:   #B45309;
+	        --qf-green:   #047857;
+	        --qf-violet:  #7C3AED;
+	        --qf-tier-1:  #A16207;
+	        --qf-tier-2:  #2563EB;
+	        --qf-tier-3:  #475569;
 	        --qf-tier-4:  #64748B;
-	        --qf-noise:   #F87171;
-	        --qf-muted:   rgba(160, 168, 180, 0.85);
-	        --qf-surface-border: rgba(148, 163, 184, 0.18);
-	        --qf-soft-border: rgba(148, 163, 184, 0.28);
+	        --qf-noise:   #B91C1C;
+	        --qf-muted:   #64748B;
+	        --qf-bg: #FFFFFF;
+	        --qf-bg-soft: #F8FAFC;
+	        --qf-bg-muted: #F1F5F9;
+	        --qf-text: #111827;
+	        --qf-text-soft: #334155;
+	        --qf-surface-border: #DDE5EE;
+	        --qf-soft-border: #CBD5E1;
+	        --qf-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 	    }
 
-    html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea {
-        font-family: 'Fira Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-        font-feature-settings: "tnum" 1, "ss01" 1;
-    }
-    [data-testid="stDataFrame"] {
-        font-family: 'Fira Sans', system-ui, sans-serif;
-        font-feature-settings: "tnum" 1;
-    }
-    [data-testid="stMetricValue"], code {
-        font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
-        font-variant-numeric: tabular-nums;
-    }
+	    html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea {
+	        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	        font-feature-settings: "tnum" 1;
+	        color: var(--qf-text);
+	    }
+	    [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
+	        background: var(--qf-bg) !important;
+	    }
+	    [data-testid="stHeader"], [data-testid="stToolbar"] {
+	        background: rgba(255, 255, 255, 0.94) !important;
+	    }
+	    [data-testid="stSidebar"] {
+	        background: var(--qf-bg-soft) !important;
+	    }
+	    textarea, input, [data-baseweb="select"] > div {
+	        background-color: var(--qf-bg) !important;
+	        color: var(--qf-text) !important;
+	        border-color: var(--qf-surface-border) !important;
+	    }
+	    label, [data-testid="stWidgetLabel"] {
+	        color: var(--qf-text) !important;
+	        font-weight: 600;
+	    }
+	    p, li, span, div {
+	        letter-spacing: 0;
+	    }
+	    [data-testid="stDataFrame"] {
+	        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	        font-feature-settings: "tnum" 1;
+	    }
+	    [data-testid="stMetricValue"], code {
+	        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+	        font-variant-numeric: tabular-nums;
+	    }
 
 	    .main .block-container {
 	        padding-top: 1.25rem;
@@ -66,15 +94,16 @@ st.markdown(
 	    h3 { font-size: 1.1rem; font-weight: 600; }
 	    h4 { font-size: 1rem; font-weight: 600; }
 
-    [data-testid="stMetric"] {
-        background: var(--secondary-background-color);
-        border: 1px solid var(--qf-surface-border);
-        border-radius: 8px;
-        padding: 0.65rem 0.85rem;
-        color: var(--text-color);
-        transition: border-color 180ms ease;
-    }
-    [data-testid="stMetric"]:hover { border-color: rgba(148, 163, 184, 0.35); }
+	    [data-testid="stMetric"] {
+	        background: var(--qf-bg);
+	        border: 1px solid var(--qf-surface-border);
+	        border-radius: 8px;
+	        padding: 0.65rem 0.85rem;
+	        color: var(--qf-text);
+	        box-shadow: var(--qf-shadow);
+	        transition: border-color 180ms ease;
+	    }
+	    [data-testid="stMetric"]:hover { border-color: var(--qf-soft-border); }
 	    [data-testid="stMetricLabel"] { font-size: 0.74rem; opacity: 0.72; letter-spacing: 0; }
 	    [data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 500; }
 	    [data-testid="stMetricDelta"] svg { display: none; }
@@ -97,6 +126,7 @@ st.markdown(
 	        line-height: 1.16;
 	        letter-spacing: 0;
 	        margin: 0;
+	        color: var(--qf-text);
 	    }
 	    .qf-app-subtitle {
 	        max-width: 860px;
@@ -108,9 +138,10 @@ st.markdown(
 	    .qf-mode-hint {
 	        border: 1px solid var(--qf-surface-border);
 	        border-radius: 8px;
-	        padding: 0.75rem 0.85rem;
-	        background: rgba(148, 163, 184, 0.06);
-	        min-height: 6.3rem;
+	        padding: 0.72rem 0.82rem;
+	        background: var(--qf-bg);
+	        min-height: 5.8rem;
+	        box-shadow: var(--qf-shadow);
 	    }
 	    .qf-mode-hint-title {
 	        color: var(--qf-blue);
@@ -119,9 +150,9 @@ st.markdown(
 	        margin-bottom: 0.2rem;
 	    }
 	    .qf-mode-hint-body {
-	        color: var(--text-color);
-	        font-size: 0.9rem;
-	        line-height: 1.45;
+	        color: var(--qf-text-soft);
+	        font-size: 0.86rem;
+	        line-height: 1.42;
 	    }
 	    .qf-results-header {
 	        border-top: 1px solid var(--qf-surface-border);
@@ -131,9 +162,10 @@ st.markdown(
 	    }
 	    .qf-results-title {
 	        font-size: 1.22rem;
-	        font-weight: 650;
+	        font-weight: 700;
 	        line-height: 1.35;
 	        margin-bottom: 0.25rem;
+	        color: var(--qf-text);
 	    }
 	    .qf-results-meta {
 	        color: var(--qf-muted);
@@ -144,32 +176,33 @@ st.markdown(
 	    .qf-rule {
 	        border-left: 4px solid var(--qf-blue);
         padding: 0.35rem 0 0.35rem 0.75rem;
-        color: var(--text-color);
+        color: var(--qf-text);
         font-size: 0.92rem;
     }
     .qf-error {
         border-left: 4px solid var(--qf-red);
         padding: 0.35rem 0 0.35rem 0.75rem;
     }
-    .qf-chip {
-        display: inline-block;
-        padding: 0.2rem 0.6rem;
-        border-radius: 999px;
-        font-size: 0.76rem;
-        font-weight: 500;
-        margin-right: 0.4rem;
-        margin-bottom: 0.25rem;
-        border: 1px solid currentColor;
-        line-height: 1.4;
-        transition: background-color 150ms ease;
-    }
+	    .qf-chip {
+	        display: inline-block;
+	        padding: 0.18rem 0.52rem;
+	        border-radius: 999px;
+	        font-size: 0.74rem;
+	        font-weight: 600;
+	        margin-right: 0.4rem;
+	        margin-bottom: 0.25rem;
+	        border: 1px solid currentColor;
+	        background: #FFFFFF;
+	        line-height: 1.4;
+	        transition: background-color 150ms ease;
+	    }
 	    .qf-chip-blue   { color: var(--qf-blue); }
 	    .qf-chip-amber  { color: var(--qf-amber); }
 	    .qf-chip-green  { color: var(--qf-green); }
 	    .qf-chip-violet { color: var(--qf-violet); }
 	    .qf-chip-muted  { color: var(--qf-muted); }
-    .qf-chip-tier-1 { color: var(--qf-tier-1); background: rgba(251, 191, 36, 0.08); }
-    .qf-chip-tier-2 { color: var(--qf-tier-2); background: rgba(96, 165, 250, 0.08); }
+    .qf-chip-tier-1 { color: var(--qf-tier-1); background: #FEF9C3; }
+    .qf-chip-tier-2 { color: var(--qf-tier-2); background: #EFF6FF; }
     .qf-chip-tier-3 { color: var(--qf-tier-3); }
     .qf-chip-tier-4 { color: var(--qf-tier-4); }
     .qf-chip-noise  { color: var(--qf-noise); background: rgba(248, 113, 113, 0.08); }
@@ -183,11 +216,12 @@ st.markdown(
 	        font-weight: 500;
     }
     .qf-detail {
-        background: var(--secondary-background-color);
+        background: var(--qf-bg);
         border: 1px solid var(--qf-surface-border);
-        border-radius: 10px;
+        border-radius: 8px;
         padding: 1rem 1.2rem;
         margin-top: 0.5rem;
+        box-shadow: var(--qf-shadow);
     }
 	    .qf-detail h4 { margin-top: 0; margin-bottom: 0.6rem; line-height: 1.35; }
 
@@ -201,7 +235,8 @@ st.markdown(
 	        border: 1px solid var(--qf-surface-border);
 	        border-radius: 8px;
 	        padding: 0.72rem 0.8rem;
-	        background: rgba(148, 163, 184, 0.055);
+	        background: var(--qf-bg);
+	        box-shadow: var(--qf-shadow);
 	    }
 	    .qf-section-tile-title {
 	        font-size: 0.86rem;
@@ -218,16 +253,18 @@ st.markdown(
 	        border-radius: 8px;
 	        padding: 0.85rem 0.95rem;
 	        margin-bottom: 0.65rem;
-	        background: rgba(148, 163, 184, 0.045);
+	        background: var(--qf-bg);
+	        box-shadow: var(--qf-shadow);
 	    }
 	    .qf-paper-card:hover {
 	        border-color: var(--qf-soft-border);
 	    }
 	    .qf-card-title {
 	        font-size: 0.98rem;
-	        font-weight: 650;
+	        font-weight: 700;
 	        line-height: 1.35;
 	        margin-bottom: 0.25rem;
+	        color: var(--qf-text);
 	    }
 	    .qf-paper-meta {
 	        color: var(--qf-muted);
@@ -236,15 +273,14 @@ st.markdown(
 	        margin-bottom: 0.45rem;
 	    }
 	    .qf-paper-why {
-	        color: var(--text-color);
+	        color: var(--qf-text-soft);
 	        font-size: 0.86rem;
 	        line-height: 1.45;
-	        opacity: 0.88;
 	        margin-top: 0.35rem;
 	    }
 	    .qf-paper-rank {
 	        color: var(--qf-cyan);
-	        font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+	        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 	        font-size: 0.78rem;
 	        font-weight: 600;
 	        margin-bottom: 0.25rem;
@@ -253,7 +289,8 @@ st.markdown(
 	        border: 1px solid var(--qf-surface-border);
 	        border-radius: 8px;
 	        padding: 1rem 1.1rem;
-	        background: rgba(148, 163, 184, 0.055);
+	        background: var(--qf-bg);
+	        box-shadow: var(--qf-shadow);
 	    }
 	    .qf-empty-title {
 	        font-size: 1rem;
@@ -269,6 +306,7 @@ st.markdown(
 	        border: 1px solid var(--qf-surface-border);
 	        border-radius: 8px;
 	        overflow: hidden;
+	        box-shadow: var(--qf-shadow);
 	    }
 	    [data-testid="stExpander"] {
 	        border-color: var(--qf-surface-border);

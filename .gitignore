@@ -20,9 +20,10 @@ env/
 *.swp
 *.swo
 
-# Streamlit local secrets / local config
+# Streamlit theme config is tracked; secrets stay local
 .streamlit/secrets.toml
-.streamlit/
+!.streamlit/
+!.streamlit/config.toml
 
 # Environment files
 .env
