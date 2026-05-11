@@ -1,4 +1,4 @@
-# Quality-First Paper Finder
+# CorePapers
 
 Streamlit Version 1 app generated from `Quality_First_Paper_Finder_Rules.docx`.
 
