@@ -10,18 +10,18 @@ The app builds an ICU literature knowledge base by searching broadly, admitting 
 - Uses a mandatory expected-paper sanity layer for topics with known sentinel papers, starting with cerebral venous thrombosis.
 - Runs an API discovery supervisor before scoring: narrow PubMed exact/focused searches, Europe PMC, OpenAlex PMID discovery, and optional PubMed related-article expansion.
 - Builds a medical evidence review artifact with source IDs, evidence hierarchy, source comparison, citation verification caveats, gaps, and limitations.
-- Uses researcher-facing search goals instead of technical depth knobs: learn/teach, find research gaps, or build a systematic-review screening pool.
+- Uses researcher-facing search modes instead of technical depth knobs: Knowledge / Learning, Research, Deep Search, and Rare / Case Report.
 - Admits only papers with a verifiable PMID, DOI, PubMed link, OpenAlex record, or Semantic Scholar record.
 - Enriches accepted records with OpenAlex citation counts and optional Semantic Scholar cross-checks.
 - Lets citation enrichment scale up to the retrieved candidate set while keeping it optional.
 - Uses a compact main-page search flow with advanced source controls collapsed by default.
-- Scores each paper using the frozen rule weights:
+- Scores each paper using the rule weights plus a search-mode fit adjustment:
   - Relevance: 40
   - Study design: 20
   - Journal quality: 20
   - Citation strength: 10
   - Recency: 10
-- Splits output into a core reading pack, extended evidence base, low-priority/indirect papers, and missing expected papers.
+- Splits output into search-mode-specific sections such as best reviews, original research papers, exhaustive evidence buckets, or closest matching case reports.
 - Protects major reviews and landmark candidates from disappearing when citation counts or journal quartiles are temporarily unavailable.
 - Marks missing data explicitly instead of guessing.
 - Exports the full CSV database, core reading pack CSV, and PMID list.

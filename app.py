@@ -137,21 +137,31 @@ st.markdown(
 
 
 DISPLAY_COLUMNS = [
+    "search_mode",
     "pmid",
     "reading_section",
     "tier",
+    "relation_type",
     "topic_match_gate",
+    "relevance_score",
+    "design_strength_score",
+    "journal_quality_score",
+    "citation_score",
+    "recency_score",
+    "final_score",
     "total_score",
     "title",
     "journal",
     "year",
     "study_design",
+    "publication_type",
     "citation_count",
     "purpose_fit_reason",
     "mandatory_review_reason",
     "expected_paper_reason",
     "api_discovery_reason",
     "verification",
+    "why_related",
     "why_included",
     "topic_match_reason",
     "tier_cap_reason",
@@ -162,15 +172,18 @@ DISPLAY_COLUMNS = [
 VISIBLE_COLUMN_ORDER = [
     "reading_section",
     "tier",
+    "relation_type",
     "title",
     "journal",
     "year",
     "study_design",
     "citation_count",
+    "final_score",
     "url",
 ]
 
 FULL_COLUMNS = [
+    "search_mode",
     "title",
     "normalized_title",
     "authors",
@@ -180,6 +193,7 @@ FULL_COLUMNS = [
     "quartile_source",
     "study_design",
     "publication_type",
+    "relation_type",
     "pmid",
     "doi",
     "url",
@@ -188,6 +202,7 @@ FULL_COLUMNS = [
     "citation_count",
     "citation_count_missing",
     "citation_source",
+    "relevance_score",
     "clinical_relevance_score",
     "design_strength_score",
     "journal_quality_score",
@@ -222,6 +237,7 @@ FULL_COLUMNS = [
     "knowledge_roles",
     "tags",
     "why_included",
+    "why_related",
     "gap_suggested",
     "relevance_reason",
     "recent_high_quality_note",
@@ -243,10 +259,10 @@ def main() -> None:
                 placeholder="Example: cerebral venous thrombosis · vili · sepsis",
                 height=74,
             )
-            search_purpose = st.segmented_control(
-                "Search goal",
+            search_purpose = st.selectbox(
+                "Search purpose",
                 options=SEARCH_PURPOSE_OPTIONS,
-                default=SEARCH_PURPOSE_DEFAULT,
+                index=SEARCH_PURPOSE_OPTIONS.index(SEARCH_PURPOSE_DEFAULT),
                 help="Choose the research task. The app selects retrieval depth and ranking emphasis automatically.",
             )
             purpose_config = search_purpose_config(search_purpose)
@@ -405,11 +421,9 @@ def main() -> None:
 
     tabs = st.tabs(
         [
-            "Core reading pack",
-            "Extended evidence base",
-            "Low-priority / indirect",
-            "Missing expected",
+            "Search-mode sections",
             "Evidence review",
+            "Missing expected",
             "Knowledge summary",
             "Research gap map",
             "Exports",
@@ -417,32 +431,21 @@ def main() -> None:
     )
 
     with tabs[0]:
-        core_df = section_rows(df, "Core reading pack", DISPLAY_COLUMNS, limit=300)
-        st.caption(f"All on-topic papers Tier 1–3 (incl. landmark / expected-paper protected). Filter by tier below. {len(core_df)} papers.")
-        render_paper_table(core_df, "No core reading-pack papers were admitted.", full_df=full_df, tier_filter=True, key="tbl_core")
+        render_mode_sections(result, df, full_df)
 
     with tabs[1]:
-        evidence_df = relevant_rows(df, DISPLAY_COLUMNS, limit=400)
-        st.caption(f"On-topic Tier 4 plus partial-match papers. Use these to widen scope. {len(evidence_df)} papers.")
-        render_paper_table(evidence_df, "No extended evidence-base papers were admitted.", full_df=full_df, tier_filter=True, key="tbl_evidence")
-
-    with tabs[2]:
-        low_df = section_rows(df, "Low-priority / indirect papers", DISPLAY_COLUMNS, limit=200)
-        render_paper_table(low_df, "No low-priority or indirect papers were kept.", full_df=full_df, key="tbl_low")
-
-    with tabs[3]:
-        render_expected_papers(result)
-
-    with tabs[4]:
         render_evidence_review(result)
 
-    with tabs[5]:
+    with tabs[2]:
+        render_expected_papers(result)
+
+    with tabs[3]:
         render_knowledge_summary(result["summary"])
 
-    with tabs[6]:
+    with tabs[4]:
         render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
 
-    with tabs[7]:
+    with tabs[5]:
         render_exports(full_df, display_df)
 
 
@@ -450,8 +453,8 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
     accepted = len(df)
     retrieved = result.get("retrieved_count", accepted)
     deduped = result.get("deduped_count", accepted)
-    core_candidates = int((df.get("reading_section") == "Core reading pack").sum()) if accepted else 0
-    core_shown = min(core_candidates, 25)
+    top_tier = int((df.get("tier") == "Tier 1: Must-read").sum()) if accepted else 0
+    section_count = int(df.get("reading_section", pd.Series(dtype=str)).nunique()) if accepted else 0
     missing_expected = len(result.get("missing_expected", []))
     rejected = len(result.get("rejected_unverified", []))
 
@@ -465,9 +468,11 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
         purpose_config = result.get("search_purpose_config", {}) or {}
         runtime = purpose_config.get("runtime_label", "")
         chips.append(
-            f'<span class="qf-chip qf-chip-blue">Search goal: {search_purpose}'
+            f'<span class="qf-chip qf-chip-blue">Search mode: {search_purpose}'
             f'{f" · {runtime}" if runtime else ""}</span>'
         )
+        if section_count:
+            chips.append(f'<span class="qf-chip qf-chip-muted">{section_count} output sections</span>')
     if expanded:
         chips.append(
             f'<span class="qf-chip qf-chip-amber">Expanded "{original}" → "{expanded}"</span>'
@@ -544,9 +549,9 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
             delta_color="off",
         )
     with reading_col:
-        st.markdown('<div class="qf-section-caption">Reading set</div>', unsafe_allow_html=True)
+        st.markdown('<div class="qf-section-caption">Mode output</div>', unsafe_allow_html=True)
         c4, c5 = st.columns(2)
-        c4.metric("Core shown", core_shown)
+        c4.metric("Tier 1", top_tier)
         c5.metric(
             "Expected missing",
             missing_expected,
@@ -670,8 +675,16 @@ def render_paper_table(
         column_config={
             "reading_section": st.column_config.TextColumn("Section", width="small"),
             "tier": st.column_config.TextColumn("Tier", width="small"),
+            "search_mode": st.column_config.TextColumn("Search mode", width="small"),
+            "relation_type": st.column_config.TextColumn("Relation", width="small"),
             "topic_match_gate": st.column_config.TextColumn("Topic gate", width="small"),
             "url": st.column_config.LinkColumn("PubMed", width="small", display_text="open"),
+            "final_score": st.column_config.ProgressColumn(
+                "Score",
+                min_value=0,
+                max_value=100,
+                format="%d",
+            ),
             "total_score": st.column_config.ProgressColumn(
                 "Score",
                 min_value=0,
@@ -681,12 +694,19 @@ def render_paper_table(
             "year": st.column_config.NumberColumn("Year", format="%d", width="small"),
             "journal": st.column_config.TextColumn("Journal", width="medium"),
             "study_design": st.column_config.TextColumn("Design", width="small"),
+            "publication_type": st.column_config.TextColumn("Publication type", width="medium"),
             "citation_count": st.column_config.NumberColumn("Citations", format="%d", width="small"),
+            "relevance_score": st.column_config.NumberColumn("Relevance", format="%d", width="small"),
+            "design_strength_score": st.column_config.NumberColumn("Design", format="%d", width="small"),
+            "journal_quality_score": st.column_config.NumberColumn("Journal", format="%d", width="small"),
+            "citation_score": st.column_config.NumberColumn("Citation", format="%d", width="small"),
+            "recency_score": st.column_config.NumberColumn("Recency", format="%d", width="small"),
             "purpose_fit_reason": st.column_config.TextColumn("Goal fit", width="medium"),
             "mandatory_review_reason": st.column_config.TextColumn("Landmark/review protection", width="medium"),
             "expected_paper_reason": st.column_config.TextColumn("Expected-paper reason", width="medium"),
             "api_discovery_reason": st.column_config.TextColumn("API discovery reason", width="medium"),
             "verification": st.column_config.TextColumn("Verified by", width="small"),
+            "why_related": st.column_config.TextColumn("Why related", width="medium"),
             "why_included": st.column_config.TextColumn("Why included", width="medium"),
             "topic_match_reason": st.column_config.TextColumn("Topic gate reason", width="medium"),
             "tier_cap_reason": st.column_config.TextColumn("Tier cap reason", width="medium"),
@@ -704,6 +724,72 @@ def render_paper_table(
                 match = full_df[full_df["pmid"].astype(str) == selected_pmid]
                 if not match.empty:
                     render_paper_detail(match.iloc[0])
+
+
+def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) -> None:
+    if df.empty:
+        st.warning("No papers were admitted.")
+        return
+    search_mode = result.get("search_purpose") or result.get("search_mode") or ""
+    sections = section_order_for_mode(search_mode)
+    discovered = [section for section in df.get("reading_section", pd.Series(dtype=str)).dropna().unique()]
+    ordered_sections = [section for section in sections if section in discovered]
+    ordered_sections.extend(section for section in discovered if section not in ordered_sections)
+
+    st.caption(f"{len(df)} papers grouped for **{search_mode or 'selected search mode'}**. Ranking and tiers change with this purpose.")
+    for index, section in enumerate(ordered_sections):
+        section_df = section_rows(df, section, DISPLAY_COLUMNS, limit=500)
+        if section_df.empty:
+            continue
+        st.subheader(section)
+        render_paper_table(
+            section_df,
+            f"No papers in {section}.",
+            full_df=full_df,
+            tier_filter=True,
+            key=f"tbl_mode_{index}",
+        )
+
+
+def section_order_for_mode(search_mode: str) -> list[str]:
+    return {
+        "Knowledge / Learning": [
+            "Best review articles",
+            "Guidelines and consensus",
+            "Foundational concepts",
+            "Landmark clinical papers",
+            "Recent updates",
+            "Background papers",
+        ],
+        "Research": [
+            "Key original research papers",
+            "Randomized controlled trials",
+            "Observational/cohort studies",
+            "Systematic reviews/meta-analyses",
+            "Research gaps",
+            "Methods/outcome-defining papers",
+            "Background reviews",
+        ],
+        "Deep Search": [
+            "Landmark/core papers",
+            "Reviews and meta-analyses",
+            "Trials",
+            "Observational studies",
+            "Mechanistic/basic science papers",
+            "Special populations",
+            "Case reports/case series",
+            "Low-priority/background papers",
+        ],
+        "Rare / Case Report": [
+            "Closest matching case reports",
+            "Case series",
+            "Rare complications",
+            "Rare associations",
+            "Unusual diagnostic findings",
+            "Background references",
+            "Tier 4 / weak but related papers",
+        ],
+    }.get(search_mode, [])
 
 
 def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None:
@@ -1059,7 +1145,7 @@ def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
         st.warning("No exportable records.")
         return
 
-    core_pack = display_df[display_df["reading_section"] == "Core reading pack"].head(25)
+    top_results = display_df.head(25)
     pmids = "\n".join(full_df["pmid"].dropna().astype(str).loc[lambda s: s.str.len() > 0].tolist())
 
     st.subheader("Full database")
@@ -1083,9 +1169,9 @@ def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
         mime="text/csv",
     )
     col2.download_button(
-        "Download core pack CSV",
-        data=core_pack.to_csv(index=False).encode("utf-8"),
-        file_name="quality_first_core_reading_pack.csv",
+        "Download top results CSV",
+        data=top_results.to_csv(index=False).encode("utf-8"),
+        file_name="quality_first_top_results.csv",
         mime="text/csv",
     )
     col3.download_button(

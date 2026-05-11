@@ -401,11 +401,13 @@ def _source_record(source_number: int, paper: dict[str, Any]) -> dict[str, Any]:
     confidence = _confidence_for_paper(paper, evidence_type, caveats)
     return {
         "source_id": f"S{source_number}",
+        "search_mode": str(paper.get("search_mode", paper.get("search_purpose", "")) or "").strip(),
         "title": str(paper.get("title", "") or "").strip(),
         "journal": str(paper.get("journal", "") or "").strip(),
         "year": paper.get("year") or "",
         "study_design": str(paper.get("study_design", "") or "").strip(),
         "evidence_type": evidence_type,
+        "relation_type": str(paper.get("relation_type", paper.get("topic_match_gate", "")) or "").strip(),
         "tier": str(paper.get("tier", "") or "").strip(),
         "topic_match_gate": str(paper.get("topic_match_gate", "") or "").strip(),
         "score": paper.get("total_score"),
@@ -414,9 +416,11 @@ def _source_record(source_number: int, paper: dict[str, Any]) -> dict[str, Any]:
         "url": str(paper.get("url", "") or "").strip(),
         "citation_count": paper.get("citation_count"),
         "citation_source": str(paper.get("citation_source", "") or "").strip(),
+        "relevance_score": paper.get("relevance_score"),
+        "final_score": paper.get("final_score", paper.get("total_score")),
         "quartile": str(paper.get("quartile", "") or "").strip(),
         "verification": str(paper.get("verification", "") or "").strip(),
-        "why_matters": _why_matters(paper, evidence_type),
+        "why_matters": str(paper.get("why_related", "") or "").strip() or _why_matters(paper, evidence_type),
         "key_role": _key_role(paper, evidence_type),
         "confidence": confidence,
         "caveats": "; ".join(caveats) if caveats else "No major metadata caveat flagged.",
@@ -449,16 +453,11 @@ def evidence_type_for_paper(paper: dict[str, Any]) -> str:
 
 
 def _is_review_eligible(paper: dict[str, Any]) -> bool:
-    section = str(paper.get("reading_section", "") or "")
     tier = str(paper.get("tier", "") or "")
     gate = str(paper.get("topic_match_gate", "") or "")
     if "Noise" in tier or "Noise" in gate:
         return False
-    return section in {
-        "Core reading pack",
-        "Extended evidence base",
-        "Low-priority / indirect papers",
-    }
+    return bool(str(paper.get("reading_section", "") or "").strip())
 
 
 def _select_top(records: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -723,7 +722,7 @@ def _append_source_section(lines: list[str], title: str, records: list[dict[str,
         return
     for record in records:
         lines.append(
-            "- [{sid}] **{title}** ({journal}, {year}) - {why} PMID: {pmid}; DOI: {doi}".format(
+                "- [{sid}] **{title}** ({journal}, {year}) - {why} PMID: {pmid}; DOI: {doi}".format(
                 sid=record.get("source_id", ""),
                 title=record.get("title", ""),
                 journal=record.get("journal", "journal unavailable"),

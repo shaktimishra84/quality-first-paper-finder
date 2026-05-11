@@ -121,6 +121,29 @@ GAP_TERMS = [
     "trial protocol",
 ]
 
+RARE_CASE_TERMS = [
+    "case report",
+    "case reports",
+    "case series",
+    "rare",
+    "unusual",
+    "uncommon",
+    "atypical",
+    "complication",
+    "complications",
+    "adverse event",
+    "adverse events",
+    "adverse drug",
+    "device-related",
+    "presentation",
+    "presenting",
+    "association",
+    "associations",
+    "diagnostic finding",
+    "imaging finding",
+    "laboratory finding",
+]
+
 DATABASE_TERMS = [
     "mimic",
     "eicu",
@@ -150,14 +173,16 @@ TOPIC_LEVEL_ORDER = {
     "background": 3,
     "noise": 4,
 }
-SEARCH_PURPOSE_KNOWLEDGE = "Learn / teach topic"
-SEARCH_PURPOSE_RESEARCH = "Find research gaps"
-SEARCH_PURPOSE_META_ANALYSIS = "Systematic review pool"
+SEARCH_PURPOSE_KNOWLEDGE = "Knowledge / Learning"
+SEARCH_PURPOSE_RESEARCH = "Research"
+SEARCH_PURPOSE_DEEP = "Deep Search"
+SEARCH_PURPOSE_RARE = "Rare / Case Report"
 SEARCH_PURPOSE_DEFAULT = SEARCH_PURPOSE_RESEARCH
 SEARCH_PURPOSE_OPTIONS = [
     SEARCH_PURPOSE_KNOWLEDGE,
     SEARCH_PURPOSE_RESEARCH,
-    SEARCH_PURPOSE_META_ANALYSIS,
+    SEARCH_PURPOSE_DEEP,
+    SEARCH_PURPOSE_RARE,
 ]
 SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
     SEARCH_PURPOSE_KNOWLEDGE: {
@@ -167,7 +192,7 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Usually fastest",
-        "description": "Best for learning, teaching, journal club, or building a clean reading pack.",
+        "description": "Best reviews and conceptual papers.",
     },
     SEARCH_PURPOSE_RESEARCH: {
         "candidate_depth": 130,
@@ -176,27 +201,44 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": True,
         "runtime_label": "Deeper search",
-        "description": "Best for project planning, identifying gaps, and generating study ideas.",
+        "description": "Original studies, RCTs, cohorts, and gap-defining evidence.",
     },
-    SEARCH_PURPOSE_META_ANALYSIS: {
+    SEARCH_PURPOSE_DEEP: {
         "candidate_depth": 200,
         "enrichment_limit": 150,
         "review_max_sources": 200,
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Most exhaustive",
-        "description": "Best for systematic review or meta-analysis screening. Expect a few minutes.",
+        "description": "Broad exhaustive collection.",
     },
+    SEARCH_PURPOSE_RARE: {
+        "candidate_depth": 160,
+        "enrichment_limit": 100,
+        "review_max_sources": 160,
+        "semantic_scholar": False,
+        "ai_gap_analysis": False,
+        "runtime_label": "Broad rare-event search",
+        "description": "Unusual cases, rare complications, and low-frequency reports.",
+    },
+}
+SEARCH_PURPOSE_ALIASES = {
+    "Learn / teach topic": SEARCH_PURPOSE_KNOWLEDGE,
+    "Find research gaps": SEARCH_PURPOSE_RESEARCH,
+    "Systematic review pool": SEARCH_PURPOSE_DEEP,
 }
 
 
 def search_purpose_config(search_purpose: str) -> dict[str, Any]:
-    config = SEARCH_PURPOSE_PRESETS.get(search_purpose) or SEARCH_PURPOSE_PRESETS[SEARCH_PURPOSE_DEFAULT]
+    normalized = normalized_search_purpose(search_purpose)
+    config = SEARCH_PURPOSE_PRESETS.get(normalized) or SEARCH_PURPOSE_PRESETS[SEARCH_PURPOSE_DEFAULT]
     return dict(config)
 
 
 def normalized_search_purpose(search_purpose: str) -> str:
-    return search_purpose if search_purpose in SEARCH_PURPOSE_PRESETS else SEARCH_PURPOSE_DEFAULT
+    if search_purpose in SEARCH_PURPOSE_PRESETS:
+        return search_purpose
+    return SEARCH_PURPOSE_ALIASES.get(search_purpose, SEARCH_PURPOSE_DEFAULT)
 
 
 @functools.lru_cache(maxsize=1)
@@ -361,11 +403,16 @@ def build_search_layers(
         review_retmax = max(candidate_depth, 80)
         focused_retmax = max(25, candidate_depth // 3)
         gap_retmax = max(15, candidate_depth // 4)
-    elif purpose == SEARCH_PURPOSE_META_ANALYSIS:
+    elif purpose == SEARCH_PURPOSE_DEEP:
         broad_retmax = max(candidate_depth, 200)
         review_retmax = max(candidate_depth, 120)
         focused_retmax = max(candidate_depth, 150)
         gap_retmax = max(50, candidate_depth // 2)
+    elif purpose == SEARCH_PURPOSE_RARE:
+        broad_retmax = max(candidate_depth, 140)
+        review_retmax = max(40, candidate_depth // 3)
+        focused_retmax = max(candidate_depth, 120)
+        gap_retmax = max(candidate_depth, 120)
     else:
         broad_retmax = max(candidate_depth, 100)
         review_retmax = max(50, candidate_depth // 2)
@@ -410,7 +457,7 @@ def build_search_layers(
             retmax=gap_retmax,
         ),
     ]
-    if purpose == SEARCH_PURPOSE_META_ANALYSIS:
+    if purpose == SEARCH_PURPOSE_DEEP:
         layers.insert(
             0,
             SearchLayer(
@@ -418,6 +465,21 @@ def build_search_layers(
                 purpose="Broad candidate pool for systematic-review style title/abstract screening.",
                 query=f"({topic_query})",
                 retmax=max(candidate_depth, 200),
+            ),
+        )
+    if purpose == SEARCH_PURPOSE_RARE:
+        rare_clause = (
+            '"case reports"[Publication Type] OR "case report" OR "case series" OR '
+            'rare OR unusual OR uncommon OR atypical OR complication OR complications OR '
+            '"adverse event" OR "adverse drug" OR presentation OR association OR imaging OR laboratory'
+        )
+        layers.insert(
+            0,
+            SearchLayer(
+                name="Rare/case reports",
+                purpose="Find rare presentations, complications, adverse events, case reports, and case series.",
+                query=f"({topic_query}) AND ({rare_clause})",
+                retmax=max(candidate_depth, 150),
             ),
         )
     return layers
@@ -1903,7 +1965,8 @@ def score_and_classify_paper(
     paper["recency_score"] = recency_score
     paper["purpose_fit_score"] = purpose_score
     paper["purpose_fit_reason"] = purpose_reason
-    paper["search_purpose"] = normalized_search_purpose(context.search_purpose)
+    paper["search_mode"] = normalized_search_purpose(context.search_purpose)
+    paper["search_purpose"] = paper["search_mode"]
     paper["penalty_score"] = penalty_score
     paper["penalty_notes"] = penalty_notes
     paper["base_score"] = base_total
@@ -1918,11 +1981,12 @@ def score_and_classify_paper(
     paper["mandatory_review_candidate"] = review_protection["candidate"]
     paper["mandatory_review_reason"] = review_protection["reason"]
     paper["landmark_seed_match"] = bool(paper.get("expected_paper_reason"))
-    paper["score_only_tier"] = assign_tier(paper)
+    paper["score_only_tier"] = assign_mode_tier(paper, context)
     paper["tier"], paper["tier_cap_reason"] = apply_tier_caps(
         paper,
         paper["score_only_tier"],
         topic_gate["max_tier_order"],
+        context,
     )
     paper["normalized_title"] = normalize_title(paper.get("title", ""))
     paper["publication_type"] = ", ".join(paper.get("publication_types", []))
@@ -1931,9 +1995,11 @@ def score_and_classify_paper(
     paper["tags"] = build_tags(paper, design, context)
     paper["verification"] = verification_label(paper)
     paper["why_included"] = why_included(paper)
+    paper["why_related"] = paper["why_included"]
+    paper["relation_type"] = relation_type_for_paper(paper)
     paper["gap_suggested"] = suggest_paper_gap(paper, context)
     paper["evidence_family"] = evidence_family(paper)
-    paper["reading_section"] = assign_reading_section(paper)
+    paper["reading_section"] = assign_reading_section(paper, context)
     paper["ranking_confidence"] = ranking_confidence_for(paper)
     paper["reason_for_tier"] = reason_for_tier(paper)
     paper["search_layers"] = ", ".join(paper.get("search_layers", []))
@@ -2504,6 +2570,8 @@ def search_purpose_adjustment(
     score = 0
     reasons: list[str] = []
 
+    rare_signal = has_any(text, RARE_CASE_TERMS)
+
     if purpose == SEARCH_PURPOSE_KNOWLEDGE:
         if design in {"Guideline / consensus / society statement", "Systematic review / meta-analysis"}:
             score += 10
@@ -2521,10 +2589,10 @@ def search_purpose_adjustment(
             score -= 3
             reasons.append("learning mode de-emphasizes narrow low-level evidence")
 
-    elif purpose == SEARCH_PURPOSE_META_ANALYSIS:
+    elif purpose == SEARCH_PURPOSE_DEEP:
         if direct:
             score += 6
-            reasons.append("screening mode keeps directly matched records high")
+            reasons.append("deep search keeps directly matched records high")
         if design in {
             "Landmark randomized trial",
             "Randomized controlled trial",
@@ -2533,12 +2601,41 @@ def search_purpose_adjustment(
             "Large retrospective / database study",
             "Single-centre observational study",
             "Case series / case report",
+            "Experimental / animal / basic science",
+            "Molecular / mechanistic study",
         }:
             score += 5
-            reasons.append("screening mode prioritizes primary study designs")
+            reasons.append("deep search keeps all relevant study designs")
         elif design in {"Systematic review / meta-analysis", "Guideline / consensus / society statement"}:
             score += 3
-            reasons.append("screening mode keeps reviews/guidelines as cross-reference sources")
+            reasons.append("deep search keeps reviews/guidelines as cross-reference sources")
+
+    elif purpose == SEARCH_PURPOSE_RARE:
+        if design == "Case series / case report":
+            score += 12
+            reasons.append("rare/case mode prioritizes case reports and case series")
+        elif rare_signal:
+            score += 10
+            reasons.append("rare/case mode prioritizes rare presentations or complications")
+        elif design in {
+            "Large retrospective / database study",
+            "Single-centre observational study",
+            "Diagnostic accuracy study",
+        }:
+            score += 4
+            reasons.append("descriptive study may contain rare-event data")
+        elif design in {
+            "Guideline / consensus / society statement",
+            "Systematic review / meta-analysis",
+            "Narrative review",
+            "Landmark randomized trial",
+            "Randomized controlled trial",
+        }:
+            score -= 4
+            reasons.append("rare/case mode down-ranks broad guidance and common-topic evidence")
+        if direct:
+            score += 3
+            reasons.append("direct rare-topic match")
 
     else:
         if design in {
@@ -2565,8 +2662,23 @@ def search_purpose_adjustment(
         if has_any(text, LMIC_TERMS + ["implementation", "feasibility", "external validation"]):
             score += 3
             reasons.append("implementation, validation, or LMIC relevance")
+        if design in {"Narrative review", "Editorial / commentary", "Case series / case report"}:
+            score -= 4
+            reasons.append("research mode down-ranks narrative, opinion, and small case evidence")
 
     return max(-8, min(15, score)), "; ".join(dict.fromkeys(reasons))
+
+
+def relation_type_for_paper(paper: dict[str, Any]) -> str:
+    level = paper.get("topic_match_level", "")
+    mapping = {
+        "direct": "Directly related",
+        "abstract_only": "Related in abstract",
+        "partial": "Partially related",
+        "background": "Background / indirect",
+        "noise": "Weak or uncertain relation",
+    }
+    return mapping.get(level, paper.get("topic_match_gate", "Relation not classified"))
 
 
 def assign_tier(paper: dict[str, Any]) -> str:
@@ -2585,26 +2697,120 @@ def assign_tier(paper: dict[str, Any]) -> str:
     return "Tier 4: Low priority"
 
 
+def assign_mode_tier(paper: dict[str, Any], context: SearchContext) -> str:
+    if paper.get("expected_paper_reason"):
+        return "Tier 1: Must-read"
+
+    purpose = normalized_search_purpose(context.search_purpose)
+    design = paper.get("study_design", "")
+    total = paper.get("total_score", 0)
+    relevance = paper.get("relevance_score", 0)
+    topic_level = paper.get("topic_match_level", "")
+    direct = topic_level in {"direct", "abstract_only"}
+    text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    rare_signal = has_any(text, RARE_CASE_TERMS)
+    major_review = bool(paper.get("mandatory_review_candidate"))
+
+    if purpose == SEARCH_PURPOSE_KNOWLEDGE:
+        if direct and (
+            design in {
+                "Guideline / consensus / society statement",
+                "Systematic review / meta-analysis",
+                "Narrative review",
+                "Landmark physiological review",
+            }
+            or major_review
+        ) and total >= 55:
+            return "Tier 1: Must-read"
+        if direct and design in {"Landmark randomized trial", "Randomized controlled trial"} and total >= 60:
+            return "Tier 2: Useful supporting"
+        if direct and total >= 45:
+            return "Tier 2: Useful supporting"
+        if topic_level in {"direct", "abstract_only", "partial", "background"}:
+            return "Tier 3: Background"
+        return "Tier 4: Low priority"
+
+    if purpose == SEARCH_PURPOSE_RESEARCH:
+        if (
+            direct
+            and design in {
+                "Landmark randomized trial",
+                "Randomized controlled trial",
+                "Large multicentre prospective cohort",
+                "Large retrospective / database study",
+                "Diagnostic accuracy study",
+                "Systematic review / meta-analysis",
+            }
+            and total >= 55
+        ):
+            return "Tier 1: Must-read"
+        if design in {"Narrative review", "Landmark physiological review"}:
+            return "Tier 2: Useful supporting" if major_review and direct else "Tier 3: Background"
+        if direct and total >= 45:
+            return "Tier 2: Useful supporting"
+        if topic_level in {"direct", "abstract_only", "partial", "background"}:
+            return "Tier 3: Background"
+        return "Tier 4: Low priority"
+
+    if purpose == SEARCH_PURPOSE_DEEP:
+        if direct and (paper.get("expected_paper_reason") or major_review or total >= 65):
+            return "Tier 1: Must-read"
+        if topic_level in {"direct", "abstract_only"} and relevance >= 18:
+            return "Tier 2: Useful supporting"
+        if topic_level in {"partial", "background"}:
+            return "Tier 3: Background"
+        return "Tier 4: Low priority"
+
+    if purpose == SEARCH_PURPOSE_RARE:
+        if direct and (design == "Case series / case report" or rare_signal):
+            return "Tier 1: Must-read"
+        if topic_level in {"direct", "abstract_only", "partial"} and (
+            design == "Case series / case report" or rare_signal
+        ):
+            return "Tier 2: Useful supporting"
+        if topic_level in {"direct", "abstract_only", "partial", "background"}:
+            return "Tier 3: Background"
+        return "Tier 4: Low priority"
+
+    return assign_tier(paper)
+
+
 def apply_tier_caps(
     paper: dict[str, Any],
     score_only_tier: str,
     topic_max_tier_order: int,
+    context: SearchContext,
 ) -> tuple[str, str]:
     if paper.get("expected_paper_reason"):
         return "Tier 1: Must-read", "landmark seed — promoted to Tier 1 regardless of gate/quality caps"
 
+    purpose = normalized_search_purpose(context.search_purpose)
     cap_order = topic_max_tier_order
+    topic_level = paper.get("topic_match_level", "")
+    if purpose == SEARCH_PURPOSE_DEEP and topic_level in {"partial", "background"}:
+        cap_order = min(cap_order, 3)
+    if purpose == SEARCH_PURPOSE_RARE and topic_level == "partial":
+        cap_order = min(cap_order, 2)
+    elif purpose == SEARCH_PURPOSE_RARE and topic_level == "background":
+        cap_order = min(cap_order, 3)
     cap_reasons = []
-    if topic_max_tier_order > 1:
+    if cap_order > 1:
         cap_reasons.append(
-            f"Rule 0 topic gate caps this paper at {TIER_BY_ORDER[topic_max_tier_order]}"
+            f"Rule 0 topic gate caps this paper at {TIER_BY_ORDER[cap_order]}"
         )
 
-    quality_cap_order, quality_reason = quality_data_cap(paper)
-    if quality_cap_order > cap_order:
-        cap_order = quality_cap_order
-    if quality_reason:
-        cap_reasons.append(quality_reason)
+    if purpose not in {SEARCH_PURPOSE_DEEP, SEARCH_PURPOSE_RARE}:
+        quality_cap_order, quality_reason = quality_data_cap(paper)
+        if quality_cap_order > cap_order:
+            cap_order = quality_cap_order
+        if quality_reason:
+            cap_reasons.append(quality_reason)
+
+    mode_cap_order, mode_reason = mode_specific_tier_cap(paper, context)
+    if mode_cap_order > cap_order:
+        cap_order = mode_cap_order
+    if mode_reason:
+        cap_reasons.append(mode_reason)
 
     score_order = TIER_ORDER.get(score_only_tier, 5)
     final_order = max(score_order, cap_order)
@@ -2612,6 +2818,37 @@ def apply_tier_caps(
     if final_tier != score_only_tier and not cap_reasons:
         cap_reasons.append(f"tier capped from {score_only_tier} to {final_tier}")
     return final_tier, "; ".join(cap_reasons)
+
+
+def mode_specific_tier_cap(paper: dict[str, Any], context: SearchContext) -> tuple[int, str]:
+    purpose = normalized_search_purpose(context.search_purpose)
+    design = paper.get("study_design", "")
+    text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    rare_signal = has_any(text, RARE_CASE_TERMS)
+
+    if purpose == SEARCH_PURPOSE_RESEARCH and design in {
+        "Narrative review",
+        "Landmark physiological review",
+    } and not (paper.get("mandatory_review_candidate") or paper.get("expected_paper_reason")):
+        return 3, "research mode caps narrative/background reviews at Tier 3 unless landmark or gap-defining"
+
+    if purpose == SEARCH_PURPOSE_KNOWLEDGE and design in {
+        "Case series / case report",
+        "Experimental / animal / basic science",
+        "Molecular / mechanistic study",
+    } and not paper.get("expected_paper_reason"):
+        return 3, "knowledge mode keeps narrow low-level evidence as background"
+
+    if purpose == SEARCH_PURPOSE_RARE and design in {
+        "Guideline / consensus / society statement",
+        "Systematic review / meta-analysis",
+        "Narrative review",
+        "Landmark randomized trial",
+        "Randomized controlled trial",
+    } and not rare_signal:
+        return 3, "rare/case mode caps broad evidence unless it contains rare-event data"
+
+    return 1, ""
 
 
 def quality_data_cap(paper: dict[str, Any]) -> tuple[int, str]:
@@ -2643,9 +2880,92 @@ def quality_data_cap(paper: dict[str, Any]) -> tuple[int, str]:
     )
 
 
-def assign_reading_section(paper: dict[str, Any]) -> str:
+def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str:
+    purpose = normalized_search_purpose(context.search_purpose)
+    design = paper.get("study_design", "")
     topic_level = paper.get("topic_match_level", "")
     tier_order = TIER_ORDER.get(paper.get("tier", ""), 5)
+    text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    rare_signal = has_any(text, RARE_CASE_TERMS)
+    recent = bool(paper.get("year") and context.current_year - paper["year"] <= 3)
+
+    if purpose == SEARCH_PURPOSE_KNOWLEDGE:
+        if design == "Landmark physiological review":
+            return "Foundational concepts"
+        if design == "Narrative review" or (
+            design == "Systematic review / meta-analysis" and tier_order <= 2
+        ):
+            return "Best review articles"
+        if design == "Guideline / consensus / society statement":
+            return "Guidelines and consensus"
+        if design in {"Experimental / animal / basic science", "Molecular / mechanistic study"}:
+            return "Foundational concepts"
+        if design in {"Landmark randomized trial", "Randomized controlled trial"} and tier_order <= 2:
+            return "Landmark clinical papers"
+        if recent:
+            return "Recent updates"
+        return "Background papers"
+
+    if purpose == SEARCH_PURPOSE_RESEARCH:
+        if "gap" in str(paper.get("search_layers", "")).lower() or has_any(text, GAP_TERMS):
+            return "Research gaps"
+        if design in {"Landmark randomized trial", "Randomized controlled trial"}:
+            return "Randomized controlled trials"
+        if design in {
+            "Large multicentre prospective cohort",
+            "Large retrospective / database study",
+            "Single-centre observational study",
+        }:
+            return "Observational/cohort studies"
+        if design == "Systematic review / meta-analysis":
+            return "Systematic reviews/meta-analyses"
+        if design in {"Diagnostic accuracy study"} or has_any(text, ["outcome", "endpoint", "definition", "predict", "prognostic", "diagnostic"]):
+            return "Methods/outcome-defining papers"
+        if design in {"Narrative review", "Guideline / consensus / society statement", "Landmark physiological review"}:
+            return "Background reviews"
+        return "Key original research papers"
+
+    if purpose == SEARCH_PURPOSE_DEEP:
+        if paper.get("mandatory_review_candidate") or paper.get("expected_paper_reason") or tier_order == 1:
+            return "Landmark/core papers"
+        if design in {
+            "Narrative review",
+            "Landmark physiological review",
+            "Systematic review / meta-analysis",
+            "Guideline / consensus / society statement",
+        }:
+            return "Reviews and meta-analyses"
+        if design in {"Landmark randomized trial", "Randomized controlled trial"}:
+            return "Trials"
+        if design in {
+            "Large multicentre prospective cohort",
+            "Large retrospective / database study",
+            "Single-centre observational study",
+            "Diagnostic accuracy study",
+        }:
+            return "Observational studies"
+        if design in {"Experimental / animal / basic science", "Molecular / mechanistic study"}:
+            return "Mechanistic/basic science papers"
+        if has_any(text, ["pediatric", "paediatric", "pregnancy", "pregnant", "perioperative", "postoperative"]):
+            return "Special populations"
+        if design == "Case series / case report":
+            return "Case reports/case series"
+        return "Low-priority/background papers"
+
+    if purpose == SEARCH_PURPOSE_RARE:
+        if design == "Case series / case report" and topic_level in {"direct", "abstract_only"}:
+            return "Closest matching case reports"
+        if design == "Case series / case report":
+            return "Case series"
+        if has_any(text, ["complication", "complications", "adverse event", "adverse drug", "device-related"]):
+            return "Rare complications"
+        if has_any(text, ["association", "associated", "unusual", "uncommon", "atypical", "rare"]):
+            return "Rare associations"
+        if has_any(text, ["diagnostic", "imaging", "laboratory", "radiologic", "radiological"]):
+            return "Unusual diagnostic findings"
+        if tier_order >= 4 or not rare_signal:
+            return "Tier 4 / weak but related papers"
+        return "Background references"
 
     if paper.get("mandatory_review_candidate") or paper.get("expected_paper_reason"):
         return "Core reading pack"
@@ -2656,6 +2976,49 @@ def assign_reading_section(paper: dict[str, Any]) -> str:
     if topic_level in {"direct", "abstract_only", "partial"}:
         return "Extended evidence base"
     return "Low-priority / indirect papers"
+
+
+def reading_section_order(search_mode: str) -> dict[str, int]:
+    sections = {
+        SEARCH_PURPOSE_KNOWLEDGE: [
+            "Best review articles",
+            "Guidelines and consensus",
+            "Foundational concepts",
+            "Landmark clinical papers",
+            "Recent updates",
+            "Background papers",
+        ],
+        SEARCH_PURPOSE_RESEARCH: [
+            "Key original research papers",
+            "Randomized controlled trials",
+            "Observational/cohort studies",
+            "Systematic reviews/meta-analyses",
+            "Research gaps",
+            "Methods/outcome-defining papers",
+            "Background reviews",
+        ],
+        SEARCH_PURPOSE_DEEP: [
+            "Landmark/core papers",
+            "Reviews and meta-analyses",
+            "Trials",
+            "Observational studies",
+            "Mechanistic/basic science papers",
+            "Special populations",
+            "Case reports/case series",
+            "Low-priority/background papers",
+        ],
+        SEARCH_PURPOSE_RARE: [
+            "Closest matching case reports",
+            "Case series",
+            "Rare complications",
+            "Rare associations",
+            "Unusual diagnostic findings",
+            "Background references",
+            "Tier 4 / weak but related papers",
+        ],
+    }.get(normalized_search_purpose(search_mode), [])
+    fallback = ["Core reading pack", "Extended evidence base", "Low-priority / indirect papers"]
+    return {section: index for index, section in enumerate(sections or fallback)}
 
 
 def classify_evidence_group(paper: dict[str, Any], design: str) -> str:
@@ -2822,11 +3185,10 @@ def apply_evidence_family_ranks(papers: list[dict[str, Any]]) -> None:
 
 
 def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int]:
-    section_order = {
-        "Core reading pack": 0,
-        "Extended evidence base": 1,
-        "Low-priority / indirect papers": 2,
-    }.get(paper.get("reading_section", ""), 3)
+    section_order = reading_section_order(paper.get("search_mode", "")).get(
+        paper.get("reading_section", ""),
+        99,
+    )
     expected_order = int(paper.get("expected_paper_order", 999))
     tier_order = TIER_ORDER.get(paper.get("tier", ""), 9)
     topic_order = TOPIC_LEVEL_ORDER.get(paper.get("topic_match_level", ""), 9)
