@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -25,19 +27,22 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
 
-    :root {
-        --qf-blue:    #60A5FA;
-        --qf-red:     #F87171;
-        --qf-amber:   #FBBF24;
-        --qf-green:   #34D399;
-        --qf-tier-1:  #FBBF24;
-        --qf-tier-2:  #60A5FA;
-        --qf-tier-3:  #94A3B8;
-        --qf-tier-4:  #64748B;
-        --qf-noise:   #F87171;
-        --qf-muted:   rgba(160, 168, 180, 0.85);
-        --qf-surface-border: rgba(148, 163, 184, 0.18);
-    }
+	    :root {
+	        --qf-blue:    #60A5FA;
+	        --qf-cyan:    #22D3EE;
+	        --qf-red:     #F87171;
+	        --qf-amber:   #FBBF24;
+	        --qf-green:   #34D399;
+	        --qf-violet:  #A78BFA;
+	        --qf-tier-1:  #FBBF24;
+	        --qf-tier-2:  #60A5FA;
+	        --qf-tier-3:  #94A3B8;
+	        --qf-tier-4:  #64748B;
+	        --qf-noise:   #F87171;
+	        --qf-muted:   rgba(160, 168, 180, 0.85);
+	        --qf-surface-border: rgba(148, 163, 184, 0.18);
+	        --qf-soft-border: rgba(148, 163, 184, 0.28);
+	    }
 
     html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea {
         font-family: 'Fira Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -52,14 +57,14 @@ st.markdown(
         font-variant-numeric: tabular-nums;
     }
 
-    .main .block-container {
-        padding-top: 1.25rem;
-        max-width: 1600px;
-    }
-    h1 { font-size: 2.1rem; font-weight: 700; letter-spacing: -0.015em; }
-    h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.005em; }
-    h3 { font-size: 1.1rem; font-weight: 600; }
-    h4 { font-size: 1rem; font-weight: 600; }
+	    .main .block-container {
+	        padding-top: 1.25rem;
+	        max-width: 1600px;
+	    }
+	    h1 { font-size: 2.1rem; font-weight: 700; letter-spacing: 0; }
+	    h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: 0; }
+	    h3 { font-size: 1.1rem; font-weight: 600; }
+	    h4 { font-size: 1rem; font-weight: 600; }
 
     [data-testid="stMetric"] {
         background: var(--secondary-background-color);
@@ -70,12 +75,74 @@ st.markdown(
         transition: border-color 180ms ease;
     }
     [data-testid="stMetric"]:hover { border-color: rgba(148, 163, 184, 0.35); }
-    [data-testid="stMetricLabel"] { font-size: 0.74rem; opacity: 0.7; letter-spacing: 0.02em; }
-    [data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 500; }
-    [data-testid="stMetricDelta"] svg { display: none; }
+	    [data-testid="stMetricLabel"] { font-size: 0.74rem; opacity: 0.72; letter-spacing: 0; }
+	    [data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 500; }
+	    [data-testid="stMetricDelta"] svg { display: none; }
 
-    .qf-rule {
-        border-left: 4px solid var(--qf-blue);
+	    .qf-app-header {
+	        border-bottom: 1px solid var(--qf-surface-border);
+	        padding: 0.35rem 0 1rem 0;
+	        margin-bottom: 0.7rem;
+	    }
+	    .qf-app-kicker {
+	        color: var(--qf-cyan);
+	        font-size: 0.78rem;
+	        font-weight: 600;
+	        letter-spacing: 0;
+	        margin-bottom: 0.15rem;
+	    }
+	    .qf-app-title {
+	        font-size: 2.05rem;
+	        font-weight: 700;
+	        line-height: 1.16;
+	        letter-spacing: 0;
+	        margin: 0;
+	    }
+	    .qf-app-subtitle {
+	        max-width: 860px;
+	        color: var(--qf-muted);
+	        font-size: 0.96rem;
+	        line-height: 1.55;
+	        margin-top: 0.35rem;
+	    }
+	    .qf-mode-hint {
+	        border: 1px solid var(--qf-surface-border);
+	        border-radius: 8px;
+	        padding: 0.75rem 0.85rem;
+	        background: rgba(148, 163, 184, 0.06);
+	        min-height: 6.3rem;
+	    }
+	    .qf-mode-hint-title {
+	        color: var(--qf-blue);
+	        font-size: 0.78rem;
+	        font-weight: 600;
+	        margin-bottom: 0.2rem;
+	    }
+	    .qf-mode-hint-body {
+	        color: var(--text-color);
+	        font-size: 0.9rem;
+	        line-height: 1.45;
+	    }
+	    .qf-results-header {
+	        border-top: 1px solid var(--qf-surface-border);
+	        border-bottom: 1px solid var(--qf-surface-border);
+	        padding: 0.95rem 0;
+	        margin: 0.8rem 0 0.75rem 0;
+	    }
+	    .qf-results-title {
+	        font-size: 1.22rem;
+	        font-weight: 650;
+	        line-height: 1.35;
+	        margin-bottom: 0.25rem;
+	    }
+	    .qf-results-meta {
+	        color: var(--qf-muted);
+	        font-size: 0.9rem;
+	        line-height: 1.45;
+	    }
+
+	    .qf-rule {
+	        border-left: 4px solid var(--qf-blue);
         padding: 0.35rem 0 0.35rem 0.75rem;
         color: var(--text-color);
         font-size: 0.92rem;
@@ -96,23 +163,24 @@ st.markdown(
         line-height: 1.4;
         transition: background-color 150ms ease;
     }
-    .qf-chip-blue   { color: var(--qf-blue); }
-    .qf-chip-amber  { color: var(--qf-amber); }
-    .qf-chip-green  { color: var(--qf-green); }
-    .qf-chip-muted  { color: var(--qf-muted); }
+	    .qf-chip-blue   { color: var(--qf-blue); }
+	    .qf-chip-amber  { color: var(--qf-amber); }
+	    .qf-chip-green  { color: var(--qf-green); }
+	    .qf-chip-violet { color: var(--qf-violet); }
+	    .qf-chip-muted  { color: var(--qf-muted); }
     .qf-chip-tier-1 { color: var(--qf-tier-1); background: rgba(251, 191, 36, 0.08); }
     .qf-chip-tier-2 { color: var(--qf-tier-2); background: rgba(96, 165, 250, 0.08); }
     .qf-chip-tier-3 { color: var(--qf-tier-3); }
     .qf-chip-tier-4 { color: var(--qf-tier-4); }
     .qf-chip-noise  { color: var(--qf-noise); background: rgba(248, 113, 113, 0.08); }
 
-    .qf-section-caption {
-        font-size: 0.72rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        opacity: 0.6;
-        margin: 0.35rem 0 0.4rem 0;
-        font-weight: 500;
+	    .qf-section-caption {
+	        font-size: 0.72rem;
+	        text-transform: uppercase;
+	        letter-spacing: 0;
+	        opacity: 0.6;
+	        margin: 0.35rem 0 0.4rem 0;
+	        font-weight: 500;
     }
     .qf-detail {
         background: var(--secondary-background-color);
@@ -121,9 +189,93 @@ st.markdown(
         padding: 1rem 1.2rem;
         margin-top: 0.5rem;
     }
-    .qf-detail h4 { margin-top: 0; margin-bottom: 0.6rem; line-height: 1.35; }
+	    .qf-detail h4 { margin-top: 0; margin-bottom: 0.6rem; line-height: 1.35; }
 
-    .stTabs [data-baseweb="tab-list"] { gap: 0.4rem; border-bottom: 1px solid var(--qf-surface-border); }
+	    .qf-section-grid {
+	        display: grid;
+	        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	        gap: 0.55rem;
+	        margin: 0.4rem 0 1rem 0;
+	    }
+	    .qf-section-tile {
+	        border: 1px solid var(--qf-surface-border);
+	        border-radius: 8px;
+	        padding: 0.72rem 0.8rem;
+	        background: rgba(148, 163, 184, 0.055);
+	    }
+	    .qf-section-tile-title {
+	        font-size: 0.86rem;
+	        font-weight: 600;
+	        line-height: 1.25;
+	        margin-bottom: 0.35rem;
+	    }
+	    .qf-section-tile-meta {
+	        color: var(--qf-muted);
+	        font-size: 0.78rem;
+	    }
+	    .qf-paper-card {
+	        border: 1px solid var(--qf-surface-border);
+	        border-radius: 8px;
+	        padding: 0.85rem 0.95rem;
+	        margin-bottom: 0.65rem;
+	        background: rgba(148, 163, 184, 0.045);
+	    }
+	    .qf-paper-card:hover {
+	        border-color: var(--qf-soft-border);
+	    }
+	    .qf-card-title {
+	        font-size: 0.98rem;
+	        font-weight: 650;
+	        line-height: 1.35;
+	        margin-bottom: 0.25rem;
+	    }
+	    .qf-paper-meta {
+	        color: var(--qf-muted);
+	        font-size: 0.82rem;
+	        line-height: 1.4;
+	        margin-bottom: 0.45rem;
+	    }
+	    .qf-paper-why {
+	        color: var(--text-color);
+	        font-size: 0.86rem;
+	        line-height: 1.45;
+	        opacity: 0.88;
+	        margin-top: 0.35rem;
+	    }
+	    .qf-paper-rank {
+	        color: var(--qf-cyan);
+	        font-family: 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+	        font-size: 0.78rem;
+	        font-weight: 600;
+	        margin-bottom: 0.25rem;
+	    }
+	    .qf-empty-state {
+	        border: 1px solid var(--qf-surface-border);
+	        border-radius: 8px;
+	        padding: 1rem 1.1rem;
+	        background: rgba(148, 163, 184, 0.055);
+	    }
+	    .qf-empty-title {
+	        font-size: 1rem;
+	        font-weight: 650;
+	        margin-bottom: 0.35rem;
+	    }
+	    .qf-empty-body {
+	        color: var(--qf-muted);
+	        font-size: 0.92rem;
+	        line-height: 1.5;
+	    }
+	    [data-testid="stDataFrame"] {
+	        border: 1px solid var(--qf-surface-border);
+	        border-radius: 8px;
+	        overflow: hidden;
+	    }
+	    [data-testid="stExpander"] {
+	        border-color: var(--qf-surface-border);
+	        border-radius: 8px;
+	    }
+
+	    .stTabs [data-baseweb="tab-list"] { gap: 0.4rem; border-bottom: 1px solid var(--qf-surface-border); }
     .stTabs [data-baseweb="tab"] {
         padding: 0.5rem 0.9rem;
         border-radius: 6px 6px 0 0;
@@ -246,29 +398,147 @@ FULL_COLUMNS = [
     "abstract",
 ]
 
+SEARCH_MODE_UI_COPY = {
+    "Knowledge / Learning": {
+        "label": "Best for teaching, lectures, and understanding a topic.",
+        "keeps": "Prioritizes reviews, guidelines, consensus papers, and foundational concepts.",
+    },
+    "Research": {
+        "label": "Best for thesis, proposal, and manuscript gap finding.",
+        "keeps": "Prioritizes RCTs, cohorts, registries, systematic reviews, and gap-defining evidence.",
+    },
+    "Deep Search": {
+        "label": "Best for exhaustive collection before screening.",
+        "keeps": "Keeps all relevant designs and publication types, including editorials and case reports.",
+    },
+    "Rare / Case Report": {
+        "label": "Best for unusual presentations, complications, and adverse events.",
+        "keeps": "Prioritizes case reports, case series, letters, correspondence, and weak-but-related records.",
+    },
+}
+
+
+def e(value: object) -> str:
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+def short_text(value: object, limit: int = 220) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = " ".join(str(value).split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "..."
+
+
+def fmt_int(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "0"
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return e(value)
+
+
+def has_text(value: object) -> bool:
+    return bool(short_text(value, 2))
+
+
+def first_text(*values: object) -> str:
+    for value in values:
+        text = short_text(value)
+        if text:
+            return text
+    return ""
+
+
+def tier_chip_class(tier: object) -> str:
+    tier_str = str(tier or "")
+    if "Tier 1" in tier_str:
+        return "qf-chip-tier-1"
+    if "Tier 2" in tier_str:
+        return "qf-chip-tier-2"
+    if "Tier 3" in tier_str:
+        return "qf-chip-tier-3"
+    if "Tier 4" in tier_str:
+        return "qf-chip-tier-4"
+    if "Noise" in tier_str:
+        return "qf-chip-noise"
+    return "qf-chip-muted"
+
+
+def chip(label: object, cls: str = "qf-chip-muted") -> str:
+    text = short_text(label, 96)
+    if not text:
+        return ""
+    return f'<span class="qf-chip {cls}">{e(text)}</span>'
+
+
+def render_app_header() -> None:
+    st.markdown(
+        """
+        <div class="qf-app-header">
+          <div class="qf-app-kicker">Verified medical literature search</div>
+          <div class="qf-app-title">Quality-First Paper Finder</div>
+          <div class="qf-app-subtitle">
+            Search PubMed and enrichment APIs, recover landmark papers, rank evidence by purpose,
+            and export a citation-ready literature database with uncertainty kept visible.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_mode_hint(search_purpose: str, purpose_config: dict) -> None:
+    copy = SEARCH_MODE_UI_COPY.get(search_purpose, {})
+    label = copy.get("label") or purpose_config.get("description", "")
+    keeps = copy.get("keeps") or ""
+    runtime = purpose_config.get("runtime_label", "")
+    chips = chip(runtime, "qf-chip-blue") if runtime else ""
+    st.markdown(
+        f"""
+        <div class="qf-mode-hint">
+          <div class="qf-mode-hint-title">What this mode does</div>
+          <div class="qf-mode-hint-body">{e(label)}</div>
+          <div class="qf-mode-hint-body" style="margin-top: 0.35rem;">{e(keeps)}</div>
+          <div style="margin-top: 0.45rem;">{chips}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def main() -> None:
-    st.title("Quality-First Paper Finder")
-    st.caption("Purpose-aware medical literature search with landmark discovery, strict topic gates, and evidence review")
+    render_app_header()
 
     search_expanded = st.session_state.get("result") is None
-    with st.expander("Search setup", expanded=search_expanded):
+    with st.expander("Search workspace", expanded=search_expanded):
         with st.form("search_form"):
-            topic = st.text_area(
-                "Research topic or question",
-                placeholder="Example: cerebral venous thrombosis · vili · sepsis",
-                height=74,
-            )
-            search_purpose = st.selectbox(
-                "Search purpose",
-                options=SEARCH_PURPOSE_OPTIONS,
-                index=SEARCH_PURPOSE_OPTIONS.index(SEARCH_PURPOSE_DEFAULT),
-                help="Choose the research task. The app selects retrieval depth and ranking emphasis automatically.",
-            )
-            purpose_config = search_purpose_config(search_purpose)
-            st.caption(f"{purpose_config['description']} {purpose_config['runtime_label']}.")
+            query_col, mode_col = st.columns([2.4, 1])
+            with query_col:
+                topic = st.text_area(
+                    "Medical topic or PICO question",
+                    placeholder="Example: cerebral venous thrombosis in adults; anticoagulation and recurrence",
+                    height=108,
+                    help="Use a disease, clinical question, exposure, complication, or rare presentation.",
+                )
+            with mode_col:
+                search_purpose = st.selectbox(
+                    "Search purpose",
+                    options=SEARCH_PURPOSE_OPTIONS,
+                    index=SEARCH_PURPOSE_OPTIONS.index(SEARCH_PURPOSE_DEFAULT),
+                    help="Choose why you are searching. The app selects retrieval depth and ranking emphasis.",
+                )
+                purpose_config = search_purpose_config(search_purpose)
+                render_mode_hint(search_purpose, purpose_config)
 
-            with st.expander("Optional researcher details", expanded=False):
+            with st.expander("Optional PICO details", expanded=False):
                 pico_col_1, pico_col_2, pico_col_3 = st.columns(3)
                 with pico_col_1:
                     question_type = st.selectbox(
@@ -290,11 +560,11 @@ def main() -> None:
 
                 google_notes = st.text_area(
                     "Manual Google Scholar notes",
-                    placeholder="Use only for cross-checking landmark or cited-by observations.",
+                    placeholder="Optional: paste known missing landmark titles or citation observations.",
                     height=70,
                 )
 
-            with st.expander("App keys and optional verification files", expanded=False):
+            with st.expander("Advanced source controls", expanded=False):
                 infra_col_1, infra_col_2, infra_col_3 = st.columns(3)
                 with infra_col_1:
                     email = st.text_input("NCBI email", placeholder="Optional")
@@ -341,10 +611,10 @@ def main() -> None:
                     help="Optional columns: journal, quartile, quartile_source.",
                 )
                 st.caption(
-                    "The app automatically chooses how wide to search and how much metadata to check."
+                    "Most users can leave this closed. API keys only improve speed, rate limits, and AI primer/gap synthesis."
                 )
 
-            submitted = st.form_submit_button("Run search", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Search literature", type="primary", use_container_width=True)
 
     if submitted:
         if not topic.strip():
@@ -368,10 +638,11 @@ def main() -> None:
         if "gemini_api_key" in context_fields:
             context_kwargs["gemini_api_key"] = gemini_api_key
         context = SearchContext(**context_kwargs)
-        with st.status("Searching PubMed in parallel...", expanded=True) as status:
+        with st.status("Preparing verified source search...", expanded=True) as status:
+            status.write("- Building search layers and topic gates")
             def report_progress(message: str, completed: int, total: int) -> None:
                 if total:
-                    status.update(label=f"Searching PubMed ({completed}/{total} layers) — {message}")
+                    status.update(label=f"Searching sources ({completed}/{total} layers) - {message}")
                 else:
                     status.update(label=message)
                 status.write(f"- {message}")
@@ -399,7 +670,7 @@ def main() -> None:
 
     result = st.session_state.get("result")
     if not result:
-        st.info("Enter a topic above and run a verified search.")
+        render_start_state()
         return
 
     papers = result["papers"]
@@ -408,6 +679,7 @@ def main() -> None:
     full_df = safe_columns(df, FULL_COLUMNS)
 
     topic = st.session_state.get("last_topic", "")
+    render_results_header(result, df, topic)
     render_empty_source_state(result, df)
     render_metrics(result, df, topic)
     render_missing_landmarks(result)
@@ -421,11 +693,11 @@ def main() -> None:
 
     tabs = st.tabs(
         [
-            "Search-mode sections",
+            "Papers",
             "Evidence review",
-            "Missing expected",
+            "Expected papers",
             "Knowledge summary",
-            "Research gap map",
+            "Gap map",
             "Exports",
         ]
     )
@@ -449,6 +721,46 @@ def main() -> None:
         render_exports(full_df, display_df)
 
 
+def render_start_state() -> None:
+    st.markdown(
+        """
+        <div class="qf-empty-state">
+          <div class="qf-empty-title">Start with a clinical topic or PICO question.</div>
+          <div class="qf-empty-body">
+            Choose the search purpose first. The app will adjust retrieval, ranking, sections,
+            and tier logic for learning, research-gap work, exhaustive screening, or rare case finding.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
+    search_mode = result.get("search_purpose") or result.get("search_mode") or "Search"
+    effective_topic = result.get("topic_used", topic)
+    search_date = result.get("search_date", "")
+    accepted = len(df)
+    tier_1 = int((df.get("tier") == "Tier 1: Must-read").sum()) if accepted else 0
+    sections = int(df.get("reading_section", pd.Series(dtype=str)).nunique()) if accepted else 0
+    meta = [
+        f"{fmt_int(accepted)} admitted papers",
+        f"{fmt_int(tier_1)} Tier 1",
+        f"{fmt_int(sections)} sections",
+    ]
+    if search_date:
+        meta.append(f"searched {search_date}")
+    st.markdown(
+        f"""
+        <div class="qf-results-header">
+          <div class="qf-results-title">{e(effective_topic or "Search results")}</div>
+          <div class="qf-results-meta">{e(search_mode)} | {" | ".join(e(item) for item in meta)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
     accepted = len(df)
     retrieved = result.get("retrieved_count", accepted)
@@ -467,45 +779,31 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
     if search_purpose:
         purpose_config = result.get("search_purpose_config", {}) or {}
         runtime = purpose_config.get("runtime_label", "")
-        chips.append(
-            f'<span class="qf-chip qf-chip-blue">Search mode: {search_purpose}'
-            f'{f" · {runtime}" if runtime else ""}</span>'
-        )
+        mode_label = f"Search mode: {search_purpose}{f' - {runtime}' if runtime else ''}"
+        chips.append(chip(mode_label, "qf-chip-blue"))
         if section_count:
-            chips.append(f'<span class="qf-chip qf-chip-muted">{section_count} output sections</span>')
+            chips.append(chip(f"{section_count} output sections", "qf-chip-muted"))
     if expanded:
-        chips.append(
-            f'<span class="qf-chip qf-chip-amber">Expanded "{original}" → "{expanded}"</span>'
-        )
+        chips.append(chip(f'Expanded "{original}" to "{expanded}"', "qf-chip-amber"))
     primer_status = result.get("topic_primer_status", "")
     if profile:
         is_primed = bool(profile.get("_primed"))
         label_prefix = "Topic primer (AI)" if is_primed else "Topic profile"
         chip_class = "qf-chip-amber" if is_primed else "qf-chip-blue"
-        chips.append(
-            f'<span class="qf-chip {chip_class}">{label_prefix}: '
-            f'{profile.get("display_name", profile.get("key", ""))}</span>'
-        )
+        chips.append(chip(f'{label_prefix}: {profile.get("display_name", profile.get("key", ""))}', chip_class))
         expected_count = len(profile.get("expected_papers", []))
         if expected_count:
-            chips.append(
-                f'<span class="qf-chip qf-chip-green">{expected_count} expected papers checked</span>'
-            )
+            chips.append(chip(f"{expected_count} expected papers checked", "qf-chip-green"))
         subtopic_count = len(profile.get("gap_subtopics", []))
         if subtopic_count:
-            chips.append(
-                f'<span class="qf-chip qf-chip-amber">{subtopic_count} subtopic gap probes</span>'
-            )
+            chips.append(chip(f"{subtopic_count} subtopic gap probes", "qf-chip-amber"))
         if is_primed and primer_status == "cached":
-            chips.append('<span class="qf-chip qf-chip-muted">Primer cached this session</span>')
+            chips.append(chip("Primer cached this session", "qf-chip-muted"))
     else:
         if primer_status == "unavailable":
-            chips.append(
-                '<span class="qf-chip qf-chip-muted">No profile · primer unavailable '
-                '(add Gemini key in Advanced)</span>'
-            )
+            chips.append(chip("No profile - primer unavailable (add Gemini key in Advanced)", "qf-chip-muted"))
         else:
-            chips.append('<span class="qf-chip qf-chip-muted">Generic topic — no profile loaded</span>')
+            chips.append(chip("Generic topic - no profile loaded", "qf-chip-muted"))
 
     mesh_records = result.get("mesh_discovered", []) or []
     if mesh_records:
@@ -518,17 +816,13 @@ def render_metrics(result: dict, df: pd.DataFrame, topic: str) -> None:
         if descriptor_names:
             head = ", ".join(descriptor_names[:3])
             tail = "" if len(descriptor_names) <= 3 else f" +{len(descriptor_names) - 3} more"
-            chips.append(
-                f'<span class="qf-chip qf-chip-green">MeSH: {head}{tail} ({synonym_total} synonyms)</span>'
-            )
+            chips.append(chip(f"MeSH: {head}{tail} ({synonym_total} synonyms)", "qf-chip-green"))
     api_discovery = result.get("api_discovery", {}) or {}
     api_pmids = api_discovery.get("pmids", []) or []
     if api_pmids:
         related_count = len(api_discovery.get("related_pmids", []) or [])
-        chips.append(
-            f'<span class="qf-chip qf-chip-green">API supervisor: {len(api_pmids)} PMIDs'
-            f'{f" · {related_count} related" if related_count else ""}</span>'
-        )
+        api_label = f"API supervisor: {len(api_pmids)} PMIDs{f' - {related_count} related' if related_count else ''}"
+        chips.append(chip(api_label, "qf-chip-green"))
     st.markdown("".join(chips), unsafe_allow_html=True)
 
     funnel_col, reading_col = st.columns([3, 2])
@@ -633,14 +927,23 @@ def render_empty_source_state(result: dict, df: pd.DataFrame) -> None:
         return
     errors = result.get("errors", [])
     if errors:
-        st.error(
-            "No verified papers were returned because the live literature sources were not reachable "
-            "from this app process. The source errors are shown below."
+        title = "No verified papers were returned."
+        body = (
+            "The live literature sources were not reachable from this app process. "
+            "Source errors are shown below."
         )
     else:
-        st.warning(
-            "No verified papers were returned for this search. Broaden the topic or increase candidate depth."
-        )
+        title = "No verified papers were returned."
+        body = "Broaden the topic, try Deep Search, or add known landmark titles in manual notes."
+    st.markdown(
+        f"""
+        <div class="qf-empty-state">
+          <div class="qf-empty-title">{e(title)}</div>
+          <div class="qf-empty-body">{e(body)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_paper_table(
@@ -657,9 +960,16 @@ def render_paper_table(
     filtered = table_df
     if tier_filter and "tier" in table_df:
         tier_options = list(dict.fromkeys(table_df["tier"].dropna().tolist()))
-        selected_tiers = st.multiselect(
-            "Tier filter", tier_options, default=tier_options, key=f"{key}_tier_filter"
-        )
+        filter_col, count_col = st.columns([3, 1])
+        with filter_col:
+            selected_tiers = st.multiselect(
+                "Tier filter", tier_options, default=tier_options, key=f"{key}_tier_filter"
+            )
+        with count_col:
+            st.markdown(
+                f'<div class="qf-section-caption">{len(table_df)} records</div>',
+                unsafe_allow_html=True,
+            )
         filtered = table_df[table_df["tier"].isin(selected_tiers)] if selected_tiers else table_df
 
     visible_columns = [col for col in VISIBLE_COLUMN_ORDER if col in filtered.columns]
@@ -667,7 +977,7 @@ def render_paper_table(
         filtered,
         use_container_width=True,
         hide_index=True,
-        height=min(560, 56 + 36 * len(filtered)),
+        height=min(440, 64 + 36 * len(filtered)),
         on_select="rerun",
         selection_mode="single-row",
         column_order=visible_columns,
@@ -737,18 +1047,96 @@ def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) 
     ordered_sections.extend(section for section in discovered if section not in ordered_sections)
 
     st.caption(f"{len(df)} papers grouped for **{search_mode or 'selected search mode'}**. Ranking and tiers change with this purpose.")
+    render_top_paper_cards(full_df, limit=6)
+    render_section_overview(df, ordered_sections)
+
     for index, section in enumerate(ordered_sections):
         section_df = section_rows(df, section, DISPLAY_COLUMNS, limit=500)
         if section_df.empty:
             continue
-        st.subheader(section)
-        render_paper_table(
-            section_df,
-            f"No papers in {section}.",
-            full_df=full_df,
-            tier_filter=True,
-            key=f"tbl_mode_{index}",
+        tier_1 = int((section_df.get("tier") == "Tier 1: Must-read").sum()) if "tier" in section_df else 0
+        label = f"{section} ({len(section_df)} papers"
+        if tier_1:
+            label += f", {tier_1} Tier 1"
+        label += ")"
+        with st.expander(label, expanded=index < 2):
+            render_paper_table(
+                section_df,
+                f"No papers in {section}.",
+                full_df=full_df,
+                tier_filter=True,
+                key=f"tbl_mode_{index}",
+            )
+
+
+def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 6) -> None:
+    if full_df.empty:
+        return
+    st.markdown('<div class="qf-section-caption">Top papers at a glance</div>', unsafe_allow_html=True)
+    for rank, (_, row) in enumerate(full_df.head(limit).iterrows(), start=1):
+        title = short_text(row.get("title", "(untitled)"), 190) or "(untitled)"
+        journal = row.get("journal", "")
+        year = row.get("year", "")
+        design = row.get("study_design", "")
+        pmid = row.get("pmid", "")
+        url = short_text(row.get("url"), 500)
+        if not url and has_text(pmid):
+            url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        meta = " | ".join(e(part) for part in [journal, year, design] if has_text(part))
+        badges = [
+            chip(row.get("tier"), tier_chip_class(row.get("tier"))),
+            chip(row.get("relation_type"), "qf-chip-green"),
+            chip(row.get("reading_section"), "qf-chip-violet"),
+        ]
+        publication_type = row.get("publication_type")
+        if has_text(publication_type):
+            badges.append(chip(publication_type, "qf-chip-muted"))
+        score = row.get("final_score")
+        if score is not None and not pd.isna(score):
+            badges.append(chip(f"Score {int(score)}", "qf-chip-blue"))
+        why = first_text(row.get("why_related"), row.get("reason_for_tier"), row.get("topic_match_reason"))
+        link = f' <a href="{e(url)}" target="_blank" rel="noopener noreferrer">PubMed</a>' if url else ""
+        st.markdown(
+            f"""
+            <div class="qf-paper-card">
+              <div class="qf-paper-rank">#{rank}{link}</div>
+              <div class="qf-card-title">{e(title)}</div>
+              <div class="qf-paper-meta">{meta}</div>
+              <div>{''.join(badges)}</div>
+              <div class="qf-paper-why">{e(short_text(why, 260))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
+
+
+def render_section_overview(df: pd.DataFrame, ordered_sections: list[str]) -> None:
+    if df.empty or not ordered_sections:
+        return
+    tiles = []
+    for section in ordered_sections:
+        rows = df[df["reading_section"] == section] if "reading_section" in df else pd.DataFrame()
+        if rows.empty:
+            continue
+        tier_1 = int((rows.get("tier") == "Tier 1: Must-read").sum()) if "tier" in rows else 0
+        designs = rows.get("study_design", pd.Series(dtype=str)).dropna()
+        top_design = designs.mode().iloc[0] if not designs.empty else ""
+        meta_bits = [f"{len(rows)} papers"]
+        if tier_1:
+            meta_bits.append(f"{tier_1} Tier 1")
+        if top_design:
+            meta_bits.append(short_text(top_design, 42))
+        tiles.append(
+            f"""
+            <div class="qf-section-tile">
+              <div class="qf-section-tile-title">{e(section)}</div>
+              <div class="qf-section-tile-meta">{e(' | '.join(meta_bits))}</div>
+            </div>
+            """
+        )
+    if tiles:
+        st.markdown('<div class="qf-section-caption">Section overview</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="qf-section-grid">{"".join(tiles)}</div>', unsafe_allow_html=True)
 
 
 def section_order_for_mode(search_mode: str) -> list[str]:
@@ -803,9 +1191,9 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
         chips: list[str] = []
         for item in coverage:
             cls = "qf-chip-green" if item.get("covered") else "qf-chip-amber"
-            mark = "✓" if item.get("covered") else "—"
+            mark = "covered" if item.get("covered") else "missing"
             chips.append(
-                f'<span class="qf-chip {cls}">{mark} {item.get("name", "")}</span>'
+                chip(f'{mark}: {item.get("name", "")}', cls)
             )
         st.markdown("".join(chips), unsafe_allow_html=True)
         st.markdown("---")
@@ -833,19 +1221,19 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
             "Low": "qf-chip-muted",
         }.get(priority, "qf-chip-muted")
         chips = [
-            f'<span class="qf-chip qf-chip-muted">{gap_type}</span>',
+            chip(gap_type, "qf-chip-muted"),
         ]
         if priority:
-            chips.append(f'<span class="qf-chip {priority_class}">Priority: {priority}</span>')
+            chips.append(chip(f"Priority: {priority}", priority_class))
         if feasibility:
-            chips.append(f'<span class="qf-chip qf-chip-muted">Feasibility: {feasibility}</span>')
+            chips.append(chip(f"Feasibility: {feasibility}", "qf-chip-muted"))
         st.markdown(
             f"""
             <div class="qf-detail">
               <div style="margin-bottom: 0.45rem;">{''.join(chips)}</div>
-              <div style="font-size: 1.02rem; font-weight: 500; margin-bottom: 0.4rem;">{statement}</div>
-              <div style="opacity: 0.85; margin-bottom: 0.4rem;">{why}</div>
-              <div style="opacity: 0.7; font-size: 0.88rem;"><strong>Best study design:</strong> {design}</div>
+              <div style="font-size: 1.02rem; font-weight: 500; margin-bottom: 0.4rem;">{e(statement)}</div>
+              <div style="opacity: 0.85; margin-bottom: 0.4rem;">{e(why)}</div>
+              <div style="opacity: 0.7; font-size: 0.88rem;"><strong>Best study design:</strong> {e(design)}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -853,7 +1241,7 @@ def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None
 
 
 def render_paper_detail(row: pd.Series) -> None:
-    title = row.get("title", "(untitled)")
+    title = first_text(row.get("title"), "(untitled)")
     journal = row.get("journal", "")
     year = row.get("year", "")
     authors = row.get("authors", "")
@@ -863,47 +1251,42 @@ def render_paper_detail(row: pd.Series) -> None:
     pmid = row.get("pmid", "")
     doi = row.get("doi", "")
     abstract = row.get("abstract", "")
+    publication_type = row.get("publication_type", "")
 
     header_bits = [
-        f"<strong>{journal}</strong>" if journal else "",
-        f"{year}" if year else "",
-        design or "",
+        journal if has_text(journal) else "",
+        f"{year}" if has_text(year) else "",
+        design if has_text(design) else "",
     ]
     chips: list[str] = []
     tier = row.get("tier")
-    if tier:
-        tier_str = str(tier)
-        if "Tier 1" in tier_str:
-            cls = "qf-chip-tier-1"
-        elif "Tier 2" in tier_str:
-            cls = "qf-chip-tier-2"
-        elif "Tier 3" in tier_str:
-            cls = "qf-chip-tier-3"
-        elif "Tier 4" in tier_str:
-            cls = "qf-chip-tier-4"
-        else:
-            cls = "qf-chip-noise"
-        chips.append(f'<span class="qf-chip {cls}">{tier}</span>')
+    if has_text(tier):
+        chips.append(chip(tier, tier_chip_class(tier)))
     gate = row.get("topic_match_gate")
-    if gate:
-        chips.append(f'<span class="qf-chip qf-chip-muted">{gate}</span>')
-    if quartile and quartile not in ("quartile not verified", ""):
-        chips.append(f'<span class="qf-chip qf-chip-amber">{quartile}</span>')
+    if has_text(gate):
+        chips.append(chip(gate, "qf-chip-muted"))
+    relation = row.get("relation_type")
+    if has_text(relation):
+        chips.append(chip(relation, "qf-chip-green"))
+    if has_text(quartile) and quartile not in ("quartile not verified", ""):
+        chips.append(chip(quartile, "qf-chip-amber"))
+    if has_text(publication_type):
+        chips.append(chip(publication_type, "qf-chip-violet"))
     if citations is not None and not pd.isna(citations):
-        chips.append(f'<span class="qf-chip qf-chip-muted">{int(citations)} citations</span>')
+        chips.append(chip(f"{int(citations)} citations", "qf-chip-muted"))
 
     st.markdown(
         f"""
         <div class="qf-detail">
-          <h4>{title}</h4>
-          <div style="opacity: 0.8; margin-bottom: 0.4rem;">{' · '.join(b for b in header_bits if b)}</div>
+          <h4>{e(title)}</h4>
+          <div style="opacity: 0.8; margin-bottom: 0.4rem;">{e(' | '.join(str(b) for b in header_bits if has_text(b)))}</div>
           <div style="margin-bottom: 0.6rem;">{''.join(chips)}</div>
-          <div style="opacity: 0.85; font-size: 0.9rem; margin-bottom: 0.5rem;">{authors}</div>
+          <div style="opacity: 0.85; font-size: 0.9rem; margin-bottom: 0.5rem;">{e(authors)}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    if abstract:
+    if has_text(abstract):
         st.markdown("**Abstract**")
         st.write(abstract)
     else:
@@ -932,9 +1315,9 @@ def render_paper_detail(row: pd.Series) -> None:
                 st.markdown(f"**{label}** — {value}")
 
     link_bits: list[str] = []
-    if pmid:
+    if has_text(pmid):
         link_bits.append(f"[PubMed](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)")
-    if doi:
+    if has_text(doi):
         link_bits.append(f"[DOI](https://doi.org/{doi})")
     if link_bits:
         st.markdown(" · ".join(link_bits))
