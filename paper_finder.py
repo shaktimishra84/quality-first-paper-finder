@@ -172,8 +172,8 @@ DATABASE_TERMS = [
     "national inpatient sample",
 ]
 
-JOURNAL_SCORE = {"Q1": 12, "Q2": 9, "Q3": 4, "Q4": 1}
-JOURNAL_MAJOR_BONUS = 5
+JOURNAL_SCORE = {"Q1": 13, "Q2": 10, "Q3": 6, "Q4": 3}
+JOURNAL_MAJOR_BONUS = 2
 TIER_ORDER = {
     "Tier 1: Must-read": 1,
     "Tier 2: Useful supporting": 2,
@@ -184,10 +184,14 @@ TIER_ORDER = {
 TIER_BY_ORDER = {order: tier for tier, order in TIER_ORDER.items()}
 TOPIC_LEVEL_ORDER = {
     "direct": 0,
-    "abstract_only": 1,
-    "partial": 2,
-    "background": 3,
-    "noise": 4,
+    "direct_synonym": 1,
+    "strong_component": 2,
+    "abstract_only": 3,
+    "parent": 4,
+    "partial": 5,
+    "parallel": 6,
+    "background": 7,
+    "noise": 8,
 }
 SEARCH_PURPOSE_KNOWLEDGE = "Knowledge / Learning"
 SEARCH_PURPOSE_RESEARCH = "Research"
@@ -480,6 +484,55 @@ def build_search_layers(
             retmax=gap_retmax,
         ),
     ]
+    semantic_terms = semantic_topic_terms(topic, topic_profile(topic) or {})
+    component_terms = unique_component_axis_terms(semantic_terms.get("component", []))[:4]
+    synonym_terms = semantic_terms.get("synonym", [])[:8]
+    parent_terms = semantic_terms.get("parent", [])[:4]
+    mechanism_terms = semantic_terms.get("mechanism", [])[:6]
+
+    if len(component_terms) >= 2:
+        component_query = " AND ".join(
+            clause for clause in (pubmed_term_clause(term, "Title/Abstract") for term in component_terms[:3]) if clause
+        )
+        if component_query:
+            layers.insert(
+                1,
+                SearchLayer(
+                    name="Semantic component fallback",
+                    purpose="Fallback layer for papers covering all component concepts when the exact phrase is too narrow.",
+                    query=f"({component_query}) AND ({broad_design_clause})",
+                    retmax=max(40, candidate_depth // 2),
+                ),
+            )
+
+    synonym_clauses = [
+        clause for clause in (pubmed_term_clause(term, "Title/Abstract") for term in synonym_terms) if clause
+    ]
+    if synonym_clauses:
+        layers.insert(
+            2,
+            SearchLayer(
+                name="Synonym-expanded concept",
+                purpose="Fallback layer using disease aliases, abbreviations, MeSH-style terms, and clinically equivalent language.",
+                query=f"({' OR '.join(synonym_clauses)}) AND ({broad_design_clause})",
+                retmax=max(40, candidate_depth // 2),
+            ),
+        )
+
+    fallback_terms = clean_term_list(parent_terms + mechanism_terms)
+    if fallback_terms:
+        fallback_clauses = [
+            clause for clause in (pubmed_term_clause(term, "Title/Abstract") for term in fallback_terms[:8]) if clause
+        ]
+        if fallback_clauses:
+            layers.append(
+                SearchLayer(
+                    name="Parent/mechanism fallback",
+                    purpose="Fallback layer for parent diseases, parallel syndromes, and related mechanisms; these are labelled and tier-capped.",
+                    query=f"({' OR '.join(fallback_clauses)}) AND ({review_guideline_clause})",
+                    retmax=max(30, candidate_depth // 3),
+                )
+            )
     if purpose == SEARCH_PURPOSE_DEEP:
         layers.insert(
             0,
@@ -1853,11 +1906,28 @@ def enrich_with_semantic_scholar(paper: dict[str, Any]) -> None:
 def apply_topic_penalties(
     paper: dict[str, Any],
     context: SearchContext,
+    design: str = "",
 ) -> tuple[int, list[str]]:
     profile = topic_profile(context.topic)
     text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    publication_type_text = " ".join(
+        item.lower()
+        for item in paper.get("publication_types", [])
+        if isinstance(item, str)
+    )
     penalty_total = 0
     penalty_notes: list[str] = []
+
+    topic_level = paper.get("topic_match_level", "")
+    if topic_level == "partial":
+        penalty_total -= 5
+        penalty_notes.append("Partial disease-family topic match (-5)")
+    elif topic_level == "background":
+        penalty_total -= 10
+        penalty_notes.append("General background topic match (-10)")
+    elif topic_level == "noise":
+        penalty_total -= 15
+        penalty_notes.append("Weak/noisy topic match (-15)")
 
     if profile:
         for entry in profile.get("penalize", []):
@@ -1870,9 +1940,26 @@ def apply_topic_penalties(
                 reason = str(entry.get("reason") or entry.get("name") or "topic-profile penalty")
                 penalty_notes.append(f"{reason} ({score:+d})")
 
+    if "retracted publication" in publication_type_text or "retracted article" in text:
+        penalty_total -= 50
+        penalty_notes.append("Retracted-paper signal (-50)")
+
+    purpose = normalized_search_purpose(context.search_purpose)
+    if purpose in {SEARCH_PURPOSE_KNOWLEDGE, SEARCH_PURPOSE_RESEARCH} and design in {
+        "Experimental / animal / basic science",
+        "Molecular / mechanistic study",
+    }:
+        penalty_total -= 6
+        penalty_notes.append("Animal/basic science de-emphasized for clinical search (-6)")
+
     if not (paper.get("abstract") or "").strip():
-        penalty_total -= 5
-        penalty_notes.append("Missing abstract (-5)")
+        metadata_poor = (
+            paper.get("quartile") == "quartile not verified"
+            and paper.get("citation_count") is None
+        )
+        penalty = -8 if metadata_poor else -3
+        penalty_total += penalty
+        penalty_notes.append(f"Abstract unavailable with limited metadata ({penalty:+d})")
 
     return penalty_total, penalty_notes
 
@@ -1966,11 +2053,27 @@ def score_and_classify_paper(
     if topic_gate["level"] == "direct":
         raw_relevance_score = max(raw_relevance_score, 36)
         relevance_reason += "; Rule 0 direct topic gate raised relevance floor"
+    elif topic_gate["level"] == "direct_synonym":
+        raw_relevance_score = max(raw_relevance_score, 35)
+        relevance_reason += "; Rule 0 synonym topic gate raised relevance floor"
+    elif topic_gate["level"] == "strong_component":
+        raw_relevance_score = max(raw_relevance_score, 30)
+        relevance_reason += "; Rule 0 component topic gate raised relevance floor"
+    elif topic_gate["level"] == "abstract_only":
+        raw_relevance_score = max(raw_relevance_score, 25)
+        relevance_reason += "; Rule 0 abstract-level topic gate raised relevance floor"
+    elif topic_gate["level"] in {"parent", "parallel"}:
+        raw_relevance_score = max(raw_relevance_score, 20)
+        relevance_reason += "; Rule 0 fallback topic gate raised relevance floor"
     relevance_score = min(raw_relevance_score, topic_gate["relevance_cap"])
     design, design_score = classify_design(paper, context)
     journal_score = score_journal_quality(paper["quartile"], paper.get("journal", ""))
-    citation_score, citation_note = score_citations(paper.get("citation_count"))
-    recency_score = score_recency(paper.get("year"), context.current_year)
+    citation_score, citation_note = score_citations(
+        paper.get("citation_count"),
+        paper.get("year"),
+        context.current_year,
+    )
+    recency_score = score_recency(paper.get("year"), context.current_year, paper, design)
     purpose_score, purpose_reason = search_purpose_adjustment(paper, design, context)
 
     concept_bonus, matched_concepts = must_include_boost(paper, context)
@@ -1979,7 +2082,8 @@ def score_and_classify_paper(
         relevance_reason += f"; +{concept_bonus} for must-include concepts: {', '.join(matched_concepts)}"
 
     paper["quartile"] = paper.get("quartile", "")
-    penalty_score, penalty_notes = apply_topic_penalties(paper, context)
+    paper["topic_match_level"] = topic_gate["level"]
+    penalty_score, penalty_notes = apply_topic_penalties(paper, context, design)
 
     base_total = (
         relevance_score
@@ -1989,7 +2093,8 @@ def score_and_classify_paper(
         + recency_score
         + purpose_score
     )
-    total_score = max(0, base_total + penalty_score)
+    final_score_raw = base_total + penalty_score
+    total_score = min(100, max(0, final_score_raw))
 
     paper["topic_match_gate"] = topic_gate["gate"]
     paper["topic_match_level"] = topic_gate["level"]
@@ -2012,6 +2117,7 @@ def score_and_classify_paper(
     paper["penalty_score"] = penalty_score
     paper["penalty_notes"] = penalty_notes
     paper["base_score"] = base_total
+    paper["final_score_raw"] = final_score_raw
     paper["total_score"] = total_score
     paper["final_score"] = total_score
     paper["study_design"] = design
@@ -2171,58 +2277,355 @@ def classify_topic_match(title: str, abstract: str, context: SearchContext) -> d
 
     if profile:
         return classify_profile_topic_match(title_text, abstract_text, text, profile)
+    return classify_semantic_topic_match(title_text, abstract_text, text, context.topic, {})
 
-    topic_phrase = normalize_space(context.topic).lower()
-    topic_terms = keywords(context.topic)
-    title_coverage = coverage(topic_terms, title_text)
-    text_coverage = coverage(topic_terms, text)
 
-    if topic_phrase and topic_phrase in title_text:
+SEMANTIC_SPLIT_RE = re.compile(
+    r"\b(?:in|with|and|or|plus|versus|vs|due to|secondary to|from|after|during|following|complicating|associated with)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def semantic_topic_terms(topic: str, profile: dict[str, Any] | None = None) -> dict[str, list[str]]:
+    profile = profile or {}
+    topic_phrase = normalize_space(topic).lower()
+    components = topic_component_concepts(topic_phrase)
+    component_variants = semantic_variants_for_components(components)
+    direct_terms = [topic_phrase]
+    direct_terms.extend(str(term).lower() for term in profile.get("direct_phrases", []) if term)
+    direct_terms.extend(str(term).lower() for term in profile.get("direct_acronyms", []) if term)
+    synonym_terms = []
+    synonym_terms.extend(str(term).lower() for term in profile.get("direct_synonyms", []) if term)
+    synonym_terms.extend(str(term).lower() for term in profile.get("query_expansion_terms", []) if term)
+    synonym_terms.extend(str(term).lower() for term in profile.get("direct_acronyms", []) if term)
+    component_terms = list(components)
+    component_terms.extend(component_variants)
+    component_terms.extend(str(term).lower() for term in profile.get("component_concepts", []) if term)
+    component_terms.extend(str(term).lower() for term in profile.get("must_include_concepts", []) if term)
+    parent_terms = []
+    parent_terms.extend(str(term).lower() for term in profile.get("parent_topics", []) if term)
+    parent_terms.extend(str(term).lower() for term in profile.get("family_terms", []) if term)
+    parent_terms.extend(components)
+    parallel_terms = []
+    parallel_terms.extend(str(term).lower() for term in profile.get("parallel_topics", []) if term)
+    mechanism_terms = []
+    mechanism_terms.extend(str(term).lower() for term in profile.get("mechanism_terms", []) if term)
+    mechanism_terms.extend(str(term).lower() for term in profile.get("background_terms", []) if term)
+    return {
+        "direct": clean_term_list(direct_terms),
+        "synonym": clean_term_list(synonym_terms),
+        "component": clean_term_list(component_terms),
+        "parent": clean_term_list(parent_terms),
+        "parallel": clean_term_list(parallel_terms),
+        "mechanism": clean_term_list(mechanism_terms),
+    }
+
+
+def semantic_variants_for_components(components: list[str]) -> list[str]:
+    variants: list[str] = []
+    component_text = " ".join(components)
+    if "pulmonary embol" in component_text:
+        variants.extend(
+            [
+                "pulmonary embolism",
+                "acute pulmonary embolism",
+                "massive pulmonary embolism",
+                "high-risk pulmonary embolism",
+            ]
+        )
+    if "shock" in component_text:
+        variants.extend(
+            [
+                "shock",
+                "obstructive shock",
+                "hemodynamic collapse",
+                "haemodynamic collapse",
+                "hemodynamic instability",
+                "haemodynamic instability",
+                "right ventricular failure",
+                "acute cor pulmonale",
+            ]
+        )
+    if "right ventricular" in component_text or "rv" in component_text:
+        variants.extend(["right ventricular failure", "rv failure", "acute cor pulmonale"])
+    return clean_term_list(variants)
+
+
+def clean_term_list(terms: list[str]) -> list[str]:
+    seen: set[str] = set()
+    cleaned_terms: list[str] = []
+    for term in terms:
+        cleaned = normalize_space(str(term).lower())
+        if not cleaned or cleaned in STOPWORDS or len(cleaned) < 3:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        cleaned_terms.append(cleaned)
+    return cleaned_terms
+
+
+def topic_component_concepts(topic: str) -> list[str]:
+    topic = normalize_space(topic).lower()
+    if not topic:
+        return []
+    raw_parts = [part.strip(" ,;:()[]") for part in SEMANTIC_SPLIT_RE.split(topic)]
+    parts = []
+    for part in raw_parts:
+        if not part:
+            continue
+        words = keywords(part)
+        if len(words) >= 2:
+            parts.append(" ".join(words))
+        elif len(words) == 1:
+            parts.append(words[0])
+    if len(parts) <= 1:
+        terms = keywords(topic)
+        if len(terms) >= 4:
+            parts = [" ".join(terms[:2]), " ".join(terms[2:4])]
+    return clean_term_list(parts)
+
+
+def term_hits(terms: list[str], text: str) -> list[str]:
+    hits = []
+    for term in terms:
+        if semantic_term_in_text(term, text):
+            hits.append(term)
+    return hits
+
+
+def exact_term_hits(terms: list[str], text: str) -> list[str]:
+    return [term for term in terms if positive_exact_term_in_text(term, text)]
+
+
+def exact_term_in_text(term: str, text: str) -> bool:
+    pattern = term_regex(term)
+    return bool(pattern and re.search(pattern, text))
+
+
+def positive_exact_term_in_text(term: str, text: str) -> bool:
+    pattern = term_regex(term)
+    if not pattern:
+        return False
+    for match in re.finditer(pattern, text):
+        if not negation_scopes_match(text, match.start()):
+            return True
+    return False
+
+
+def term_regex(term: str) -> str:
+    words = keywords(term)
+    if not words:
+        return ""
+    return r"\b" + r"[^a-z0-9]+".join(re.escape(word) for word in words) + r"\b"
+
+
+def negation_scopes_match(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 90):start]
+    return bool(
+        re.search(
+            r"\b(?:without|no|not|absence of|absent|excluding|excluded|negative for|free of|lack of|lacking)\b(?:\W+\w+){0,6}\W*$",
+            prefix,
+        )
+    )
+
+
+def semantic_term_in_text(term: str, text: str) -> bool:
+    term = normalize_space(term).lower()
+    if not term:
+        return False
+    if positive_exact_term_in_text(term, text):
+        return True
+    if exact_term_in_text(term, text):
+        return False
+    term_keywords = keywords(term)
+    if len(term_keywords) >= 2 and coverage(term_keywords, text) >= 0.75:
+        return True
+    return False
+
+
+def clinical_syndrome_component(term: str) -> bool:
+    return has_any(
+        term,
+        [
+            "shock",
+            "failure",
+            "collapse",
+            "instability",
+            "syndrome",
+            "arrest",
+            "hypotension",
+            "support",
+        ],
+    )
+
+
+def component_axis(term: str) -> str:
+    term = normalize_space(term).lower()
+    if "pulmonary embol" in term:
+        return "pulmonary embolism"
+    if has_any(
+        term,
+        [
+            "cardiogenic shock",
+            "obstructive shock",
+            "shock",
+            "hemodynamic collapse",
+            "haemodynamic collapse",
+            "hemodynamic instability",
+            "haemodynamic instability",
+            "right ventricular failure",
+            "rv failure",
+            "acute cor pulmonale",
+        ],
+    ):
+        return "shock/hemodynamic collapse"
+    return term
+
+
+def component_axis_count(hits: list[str]) -> int:
+    return len({component_axis(hit) for hit in hits})
+
+
+def unique_component_axis_terms(terms: list[str]) -> list[str]:
+    seen_axes: set[str] = set()
+    unique_terms: list[str] = []
+    for term in terms:
+        axis = component_axis(term)
+        if axis in seen_axes:
+            continue
+        seen_axes.add(axis)
+        unique_terms.append(term)
+    return unique_terms
+
+
+def classify_semantic_topic_match(
+    title_text: str,
+    abstract_text: str,
+    text: str,
+    topic: str,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    terms = semantic_topic_terms(topic, profile)
+    direct_title = exact_term_hits(terms["direct"], title_text)
+    if direct_title:
         return topic_gate(
-            "Direct topic match",
+            "Direct full-concept match",
             "direct",
             40,
             1,
-            "title contains the requested topic phrase",
+            f"included as direct match: {direct_title[0]}",
         )
-    if topic_terms and title_coverage >= 0.70:
+
+    component_title_hits = term_hits(terms["component"], title_text)
+    component_text_hits = term_hits(terms["component"], text)
+    synonym_title_hits = term_hits(terms["synonym"], title_text)
+    synonym_text_hits = term_hits(terms["synonym"], text)
+
+    if synonym_title_hits and (component_axis_count(component_text_hits) >= 2 or not terms["component"]):
         return topic_gate(
-            "Direct topic match",
-            "direct",
-            40,
+            "Direct synonym match",
+            "direct_synonym",
+            38,
             1,
-            "title contains most core topic terms",
+            f"included as synonym match: {synonym_title_hits[0]}",
         )
-    if topic_phrase and topic_phrase in abstract_text:
+
+    if component_axis_count(component_title_hits) >= 2:
         return topic_gate(
-            "Abstract-only topic match",
+            "Strong component match",
+            "strong_component",
+            34,
+            1,
+            "included as direct match: " + " + ".join(component_title_hits[:3]),
+        )
+
+    direct_abstract = exact_term_hits(terms["direct"], abstract_text)
+    if direct_abstract or (
+        synonym_text_hits and component_axis_count(component_text_hits) >= 2
+    ):
+        label = (direct_abstract or synonym_text_hits)[0]
+        return topic_gate(
+            "Strong abstract match",
             "abstract_only",
             30,
-            3,
-            "abstract contains the requested topic phrase but title is broader",
+            2,
+            f"included as abstract-level match: {label}",
         )
-    if topic_terms and text_coverage >= 0.70:
+
+    if component_axis_count(component_text_hits) >= 2:
         return topic_gate(
-            "Partial disease-family match",
-            "partial",
-            24,
-            3,
-            "abstract contains most topic terms, but title is not a clear match",
+            "Strong component match",
+            "strong_component",
+            34,
+            1,
+            "included as strong component match: " + " + ".join(component_text_hits[:3]),
         )
-    if topic_terms and text_coverage >= 0.35:
+
+    parent_hits = term_hits(terms["parent"], text)
+    if parent_hits:
+        syndrome_hits = [term for term in parent_hits if clinical_syndrome_component(term)]
+        nonsyndrome_hits = [term for term in parent_hits if term not in syndrome_hits]
+        if nonsyndrome_hits:
+            return topic_gate(
+                "Parent-topic fallback",
+                "parent",
+                24,
+                2,
+                f"included as parent-topic fallback: {nonsyndrome_hits[0]}",
+            )
         return topic_gate(
-            "General background match",
+            "Parallel-topic fallback",
+            "parallel",
+            22,
+            3,
+            f"included as parallel-topic fallback: {syndrome_hits[0]}",
+        )
+
+    parallel_hits = term_hits(terms["parallel"], text)
+    if parallel_hits:
+        return topic_gate(
+            "Parallel-topic fallback",
+            "parallel",
+            22,
+            3,
+            f"included as parallel-topic fallback: {parallel_hits[0]}",
+        )
+
+    mechanism_hits = term_hits(terms["mechanism"], text)
+    if mechanism_hits:
+        return topic_gate(
+            "Mechanism/background fallback",
             "background",
             14,
             4,
-            "only a minority of topic terms are present",
+            f"included as mechanism fallback: {mechanism_hits[0]}",
+        )
+
+    topic_terms = keywords(topic)
+    text_coverage = coverage(topic_terms, text)
+    if topic_terms and text_coverage >= 0.70:
+        return topic_gate(
+            "Strong abstract match",
+            "abstract_only",
+            30,
+            2,
+            "included as abstract-level match: most topic concepts present",
+        )
+    if topic_terms and text_coverage >= 0.35:
+        return topic_gate(
+            "Background match",
+            "background",
+            14,
+            4,
+            "included as background fallback: minority topic concept overlap",
         )
     return topic_gate(
         "Noise / manual review",
         "noise",
         8,
         5,
-        "title/abstract do not clearly match the requested topic",
+        "unclear relation after semantic topic gate",
     )
 
 
@@ -2232,51 +2635,36 @@ def classify_profile_topic_match(
     text: str,
     profile: dict[str, Any],
 ) -> dict[str, Any]:
-    label = profile.get("display_name") or profile.get("key") or "topic"
-    direct_phrases = profile.get("direct_phrases", [])
+    wrong_terms = profile.get("wrong_terms", [])
     direct_acronyms = profile.get("direct_acronyms", [])
     acronym_context = profile.get("acronym_context", [])
-    wrong_terms = profile.get("wrong_terms", [])
-    family_terms = profile.get("family_terms", [])
-    background_terms = profile.get("background_terms", [])
-
-    for phrase in direct_phrases:
-        if phrase and phrase in title_text:
-            return topic_gate(
-                "Direct topic match",
-                "direct",
-                40,
-                1,
-                f"title contains core {label} term: {phrase}",
-            )
     for acronym in direct_acronyms:
         if acronym and has_contextual_acronym(title_text, acronym, acronym_context):
             return topic_gate(
-                "Direct topic match",
-                "direct",
-                40,
+                "Direct synonym match",
+                "direct_synonym",
+                38,
                 1,
-                f"title contains {acronym.upper()} with topical context",
-            )
-    for phrase in direct_phrases:
-        if phrase and phrase in abstract_text:
-            return topic_gate(
-                "Abstract-only topic match",
-                "abstract_only",
-                30,
-                3,
-                f"abstract contains core {label} term but title is broader: {phrase}",
+                f"included as synonym match: {str(acronym).upper()} with topical context",
             )
     for acronym in direct_acronyms:
-        if acronym and has_contextual_acronym(text, acronym, acronym_context):
+        if acronym and has_contextual_acronym(abstract_text, acronym, acronym_context):
             return topic_gate(
-                "Abstract-only topic match",
+                "Strong abstract match",
                 "abstract_only",
                 30,
-                3,
-                f"abstract contains {acronym.upper()} with topical context but no core title phrase",
+                2,
+                f"included as abstract-level match: {str(acronym).upper()} with topical context",
             )
-
+    semantic_gate = classify_semantic_topic_match(
+        title_text,
+        abstract_text,
+        text,
+        str(profile.get("display_name") or profile.get("key") or ""),
+        profile,
+    )
+    if semantic_gate["level"] in {"direct", "direct_synonym", "strong_component", "abstract_only"}:
+        return semantic_gate
     for term in wrong_terms:
         if term and term in text:
             return topic_gate(
@@ -2286,31 +2674,7 @@ def classify_profile_topic_match(
                 5,
                 f"off-topic exclusion signal: {term}",
             )
-    for term in family_terms:
-        if term and term in text:
-            return topic_gate(
-                "Partial disease-family match",
-                "partial",
-                24,
-                3,
-                f"family term without core {label} match: {term}",
-            )
-    for term in background_terms:
-        if term and term in text:
-            return topic_gate(
-                "General background match",
-                "background",
-                14,
-                4,
-                f"background term without core {label} match: {term}",
-            )
-    return topic_gate(
-        "Noise / manual review",
-        "noise",
-        8,
-        5,
-        f"no core {label} term found in title/abstract",
-    )
+    return semantic_gate
 
 
 def topic_gate(
@@ -2459,41 +2823,42 @@ def classify_design(paper: dict[str, Any], context: SearchContext) -> tuple[str,
     if has_any(pub_type_text, ["practice guideline", "guideline"]) or has_any(
         title, ["guideline", "consensus statement", "society statement", "scientific statement"]
     ):
-        design, score = "Guideline / consensus / society statement", 23
+        design, score = "Guideline / consensus / society statement", 21
     elif has_any(pub_type_text, ["systematic review", "meta-analysis"]) or has_any(
         title, ["systematic review", "meta-analysis", "meta analysis"]
     ):
-        design, score = "Systematic review / meta-analysis", 20
+        design, score = "Systematic review / meta-analysis", 22
     elif has_any(pub_type_text, ["randomized controlled trial"]) or (
         not has_review_type and looks_like_original_randomized_trial(title, abstract)
     ):
-        if is_major_journal and citation_count >= 200:
+        multicentre_signal = has_any(text, ["multicentre", "multicenter", "multi-centre", "multi-center"])
+        if is_major_journal and citation_count >= 200 or multicentre_signal:
             design, score = "Landmark randomized trial", 25
         else:
-            design, score = "Randomized controlled trial", 18
+            design, score = "Randomized controlled trial", 21
     elif has_review_type:
         if is_major_journal and citation_count >= 200 and landmark_age:
-            design, score = "Landmark physiological review", 22
+            design, score = "Landmark physiological review", 16
         else:
-            design, score = "Narrative review", 8
+            design, score = "Narrative review", 11
     elif has_any(title_and_types, ["diagnostic accuracy"]) or has_any(
         title, ["sensitivity", "specificity", "receiver operating"]
     ):
-        design, score = "Diagnostic accuracy study", 15
+        design, score = "Diagnostic accuracy study", 16
     elif has_any(title_and_types, ["prospective cohort", "multicentre prospective", "multicenter prospective"]):
-        design, score = "Large multicentre prospective cohort", 15
+        design, score = "Large multicentre prospective cohort", 18
     elif has_any(title_and_types, ["retrospective", "database", "registry", "observational cohort"]):
-        design, score = "Large retrospective / database study", 12
+        design, score = "Large retrospective / database study", 15
     elif has_any(title_and_types, ["cohort", "observational"]):
-        design, score = "Single-centre observational study", 9
+        design, score = "Single-centre observational study", 11
     elif has_any(text, ["in rats", "in mice", "in rabbits", "isolated lung", "ex vivo", "knockout mice"]):
-        design, score = "Experimental / animal / basic science", 10
+        design, score = "Experimental / animal / basic science", 6
     elif has_any(pub_type_text, ["case reports"]) or has_any(title, ["case report", "case series"]):
-        design, score = "Case series / case report", 4
+        design, score = "Case series / case report", 6
     elif has_any(text, ["transcriptomic", "proteomic", "rna-seq", "gene expression"]):
-        design, score = "Molecular / mechanistic study", 8
+        design, score = "Molecular / mechanistic study", 6
     elif has_any(f"{pub_type_text} {title}", LOW_EVIDENCE_PUBLICATION_TERMS):
-        design, score = "Editorial / correspondence / commentary", 5
+        design, score = "Editorial / correspondence / commentary", 7
     else:
         design, score = "Unclear", 3
 
@@ -2542,12 +2907,24 @@ def score_journal_quality(quartile: str, journal: str = "") -> int:
     base = JOURNAL_SCORE.get(quartile, 0)
     journal_lower = (journal or "").lower()
     if any(term in journal_lower for term in MAJOR_JOURNAL_TERMS):
+        if base == 0:
+            return 13
         base += JOURNAL_MAJOR_BONUS
     return min(15, base)
 
 
-def score_citations(citation_count: int | None) -> tuple[int, str]:
+def score_citations(
+    citation_count: int | None,
+    year: int | None = None,
+    current_year: int | None = None,
+) -> tuple[int, str]:
+    recent = bool(year and current_year and current_year - year <= 2)
+    fairly_recent = bool(year and current_year and current_year - year <= 5)
     if citation_count is None:
+        if recent:
+            return 2, "citation count unavailable; recent paper"
+        if fairly_recent:
+            return 1, "citation count unavailable; citation window still maturing"
         return 0, "citation count unavailable"
     if citation_count > 1000:
         return 10, "more than 1000 citations"
@@ -2556,15 +2933,22 @@ def score_citations(citation_count: int | None) -> tuple[int, str]:
     if citation_count >= 100:
         return 6, "100-499 citations"
     if citation_count >= 25:
-        return 4, "25-99 citations"
+        return 5, "25-99 citations"
     if citation_count >= 5:
-        return 2, "5-24 citations"
+        return 4 if recent else 3, "5-24 citations"
     if citation_count >= 1:
-        return 1, "less than 5 citations"
+        return 3 if recent else 1, "less than 5 citations"
+    if recent:
+        return 2, "no citations yet; recent paper"
     return 0, "less than 5 citations"
 
 
-def score_recency(year: int | None, current_year: int) -> int:
+def score_recency(
+    year: int | None,
+    current_year: int,
+    paper: dict[str, Any] | None = None,
+    design: str = "",
+) -> int:
     if not year:
         return 0
     age = current_year - year
@@ -2574,6 +2958,9 @@ def score_recency(year: int | None, current_year: int) -> int:
         return 8
     if age <= 10:
         return 5
+    paper = paper or {}
+    if paper.get("expected_paper_reason") or (paper.get("citation_count") or 0) >= 500 or "Landmark" in design:
+        return 6
     return 2
 
 
@@ -2613,67 +3000,103 @@ def search_purpose_adjustment(
     text = f"{title} {paper.get('abstract', '')} {publication_type_text}".lower()
     year = paper.get("year") or 0
     recent = bool(year and context.current_year - year <= 3)
-    direct = paper.get("topic_match_level") in {"direct", "abstract_only"}
+    direct = paper.get("topic_match_level") in {
+        "direct",
+        "direct_synonym",
+        "strong_component",
+        "abstract_only",
+    }
     score = 0
     reasons: list[str] = []
 
     rare_signal = has_any(text, RARE_CASE_TERMS)
+    rare_editorial_signal = rare_signal and design == "Editorial / correspondence / commentary"
+    practical_update = recent and has_any(title, ["review", "update", "practical", "state of the art"])
 
     if purpose == SEARCH_PURPOSE_KNOWLEDGE:
-        if design in {"Guideline / consensus / society statement", "Systematic review / meta-analysis"}:
-            score += 10
-            reasons.append("learning mode prioritizes guidelines and systematic reviews")
-        elif design in {"Narrative review", "Landmark physiological review"}:
-            score += 8
-            reasons.append("learning mode prioritizes readable review articles")
+        if design in {
+            "Guideline / consensus / society statement",
+            "Systematic review / meta-analysis",
+            "Narrative review",
+        }:
+            score += 20
+            reasons.append("learning mode prioritizes reviews, guidelines, and consensus papers")
+        elif design == "Landmark physiological review":
+            score += 18
+            reasons.append("learning mode prioritizes landmark conceptual reviews")
+        elif practical_update:
+            score += 12
+            reasons.append("recent practical review/update")
         elif design in {"Landmark randomized trial", "Randomized controlled trial"}:
-            score += 4
+            score += 8
             reasons.append("learning mode keeps major trials after review sources")
-        if recent and has_any(title, ["review", "update", "practical", "state of the art"]):
+        elif design in {
+            "Large multicentre prospective cohort",
+            "Large retrospective / database study",
+            "Diagnostic accuracy study",
+        }:
+            score += 5
+            reasons.append("learning mode keeps important original evidence after reviews")
+        elif design == "Editorial / correspondence / commentary":
             score += 3
-            reasons.append("recent practical update")
-        if design in {"Case series / case report", "Experimental / animal / basic science"}:
+            reasons.append("learning mode keeps useful expert viewpoints")
+        if design == "Case series / case report":
             score -= 3
+            reasons.append("learning mode de-emphasizes case reports and case series")
+        if design in {"Experimental / animal / basic science", "Molecular / mechanistic study"}:
+            score -= 5
             reasons.append("learning mode de-emphasizes narrow low-level evidence")
 
     elif purpose == SEARCH_PURPOSE_DEEP:
         if direct:
             score += 6
             reasons.append("deep search keeps directly matched records high")
-        if design in {
-            "Landmark randomized trial",
-            "Randomized controlled trial",
+        if design in {"Guideline / consensus / society statement", "Systematic review / meta-analysis"}:
+            score += 5
+            reasons.append("deep search keeps reviews/guidelines as cross-reference sources")
+        elif design in {"Landmark randomized trial", "Randomized controlled trial"}:
+            score += 5
+            reasons.append("deep search highlights major trial/landmark evidence")
+        elif design in {
             "Diagnostic accuracy study",
             "Large multicentre prospective cohort",
             "Large retrospective / database study",
             "Single-centre observational study",
-            "Case series / case report",
-            "Editorial / correspondence / commentary",
-            "Experimental / animal / basic science",
-            "Molecular / mechanistic study",
         }:
-            score += 5
-            reasons.append("deep search keeps all relevant study and publication types")
-        elif design in {"Systematic review / meta-analysis", "Guideline / consensus / society statement"}:
+            score += 4
+            reasons.append("deep search keeps observational and validation studies")
+        elif design in {"Case series / case report", "Editorial / correspondence / commentary"}:
             score += 3
-            reasons.append("deep search keeps reviews/guidelines as cross-reference sources")
+            reasons.append("deep search keeps case reports, correspondence, and editorials")
+        elif design in {"Experimental / animal / basic science", "Molecular / mechanistic study"}:
+            score += 2
+            reasons.append("deep search keeps relevant mechanism/basic science")
+        elif paper.get("topic_match_level") in {"background", "noise"}:
+            score += 1
+            reasons.append("weak but possible relation kept for exhaustive screening")
+        else:
+            score += 5
+            reasons.append("deep search keeps any relevant publication type")
 
     elif purpose == SEARCH_PURPOSE_RARE:
         if design == "Case series / case report":
-            score += 12
+            score += 15
             reasons.append("rare/case mode prioritizes case reports and case series")
         elif rare_signal:
-            score += 10
+            score += 15
             reasons.append("rare/case mode prioritizes rare presentations or complications")
+        elif rare_editorial_signal:
+            score += 12
+            reasons.append("rare/case mode prioritizes rare-event correspondence or letters")
         elif design == "Editorial / correspondence / commentary":
-            score += 6
-            reasons.append("rare/case mode keeps correspondence, letters, editorials, and comments")
+            score += 8
+            reasons.append("rare/case mode keeps correspondence, comments, and expert discussion")
         elif design in {
             "Large retrospective / database study",
             "Single-centre observational study",
             "Diagnostic accuracy study",
         }:
-            score += 4
+            score += 5
             reasons.append("descriptive study may contain rare-event data")
         elif design in {
             "Guideline / consensus / society statement",
@@ -2682,55 +3105,75 @@ def search_purpose_adjustment(
             "Landmark randomized trial",
             "Randomized controlled trial",
         }:
-            score -= 4
-            reasons.append("rare/case mode down-ranks broad guidance and common-topic evidence")
+            if rare_signal:
+                score += 4
+                reasons.append("broad review/guidance contains rare-event data")
+            else:
+                score -= 5 if design == "Narrative review" else 4
+                reasons.append("rare/case mode down-ranks broad guidance and common-topic evidence")
         if direct:
-            score += 3
+            score += 5
             reasons.append("direct rare-topic match")
 
     else:
-        if design in {
-            "Systematic review / meta-analysis",
-            "Guideline / consensus / society statement",
-            "Landmark randomized trial",
-            "Randomized controlled trial",
-        }:
-            score += 8
-            reasons.append("research-gap mode anchors on high-level evidence")
+        if design == "Landmark randomized trial":
+            score += 22
+            reasons.append("research mode prioritizes major multicentre or landmark RCTs")
+        elif design == "Randomized controlled trial":
+            score += 20
+            reasons.append("research mode prioritizes RCTs")
+        elif design == "Systematic review / meta-analysis":
+            score += 15
+            reasons.append("research mode anchors on systematic reviews and meta-analyses")
+        elif design == "Guideline / consensus / society statement":
+            score += 10
+            reasons.append("guidance helps define standards and unanswered questions")
+        elif design == "Large multicentre prospective cohort":
+            score += 10
+            reasons.append("research mode values large prospective evidence")
         elif design in {
             "Large multicentre prospective cohort",
             "Large retrospective / database study",
             "Diagnostic accuracy study",
         }:
-            score += 5
+            score += 8
             reasons.append("research-gap mode values strong primary evidence")
         if recent:
-            score += 3
+            score += 5
             reasons.append("recent evidence useful for current gap finding")
         if has_any(text, GAP_TERMS + ["limitation", "limitations", "future research", "further studies"]):
-            score += 5
+            score += 6
             reasons.append("explicit gap/uncertainty language")
         if has_any(text, LMIC_TERMS + ["implementation", "feasibility", "external validation"]):
-            score += 3
+            score += 5
             reasons.append("implementation, validation, or LMIC relevance")
-        if design in {
-            "Narrative review",
-            "Editorial / correspondence / commentary",
-            "Case series / case report",
-        }:
+        if design == "Narrative review":
+            score -= 3
+            reasons.append("research mode down-ranks narrative reviews")
+        if design == "Editorial / correspondence / commentary":
             score -= 4
-            reasons.append("research mode down-ranks narrative, opinion, and small case evidence")
+            reasons.append("research mode down-ranks opinion and correspondence")
+        if design == "Case series / case report":
+            score -= 5
+            reasons.append("research mode down-ranks small case evidence")
+        if design in {"Experimental / animal / basic science", "Molecular / mechanistic study"}:
+            score -= 6
+            reasons.append("research mode down-ranks animal/basic science for clinical study planning")
 
-    return max(-8, min(15, score)), "; ".join(dict.fromkeys(reasons))
+    return max(-8, min(22, score)), "; ".join(dict.fromkeys(reasons))
 
 
 def relation_type_for_paper(paper: dict[str, Any]) -> str:
     level = paper.get("topic_match_level", "")
     mapping = {
         "direct": "Directly related",
+        "direct_synonym": "Direct synonym match",
+        "strong_component": "Strong component match",
         "abstract_only": "Related in abstract",
+        "parent": "Parent-topic fallback",
+        "parallel": "Parallel-topic fallback",
         "partial": "Partially related",
-        "background": "Background / indirect",
+        "background": "Mechanism/background fallback",
         "noise": "Weak or uncertain relation",
     }
     return mapping.get(level, paper.get("topic_match_gate", "Relation not classified"))
@@ -2754,20 +3197,28 @@ def assign_tier(paper: dict[str, Any]) -> str:
 
 def assign_mode_tier(paper: dict[str, Any], context: SearchContext) -> str:
     if paper.get("expected_paper_reason"):
-        return "Tier 1: Must-read"
+        topic_level = paper.get("topic_match_level", "")
+        if topic_level in {"direct", "direct_synonym", "strong_component"}:
+            return "Tier 1: Must-read"
+        if topic_level == "abstract_only":
+            return "Tier 2: Useful supporting"
+        if topic_level in {"parent", "partial", "parallel", "background"}:
+            return "Tier 3: Background"
+        return "Noise / manual review"
 
     purpose = normalized_search_purpose(context.search_purpose)
     design = paper.get("study_design", "")
     total = paper.get("total_score", 0)
     relevance = paper.get("relevance_score", 0)
     topic_level = paper.get("topic_match_level", "")
-    direct = topic_level in {"direct", "abstract_only"}
+    strong_direct = topic_level in {"direct", "direct_synonym", "strong_component"}
+    direct_or_abstract = topic_level in {"direct", "direct_synonym", "strong_component", "abstract_only"}
     text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
     rare_signal = has_any(text, RARE_CASE_TERMS)
     major_review = bool(paper.get("mandatory_review_candidate"))
 
     if purpose == SEARCH_PURPOSE_KNOWLEDGE:
-        if direct and (
+        if strong_direct and (
             design in {
                 "Guideline / consensus / society statement",
                 "Systematic review / meta-analysis",
@@ -2777,53 +3228,94 @@ def assign_mode_tier(paper: dict[str, Any], context: SearchContext) -> str:
             or major_review
         ) and total >= 55:
             return "Tier 1: Must-read"
-        if direct and design in {"Landmark randomized trial", "Randomized controlled trial"} and total >= 60:
+        if strong_direct and design in {
+            "Landmark randomized trial",
+            "Randomized controlled trial",
+            "Large multicentre prospective cohort",
+            "Large retrospective / database study",
+            "Diagnostic accuracy study",
+        } and total >= 45:
             return "Tier 2: Useful supporting"
-        if direct and total >= 45:
+        if direct_or_abstract and total >= 45:
             return "Tier 2: Useful supporting"
-        if topic_level in {"direct", "abstract_only", "partial", "background"}:
+        if topic_level in {"direct", "direct_synonym", "strong_component", "abstract_only", "parent", "partial", "parallel", "background"}:
             return "Tier 3: Background"
         return "Tier 4: Low priority"
 
     if purpose == SEARCH_PURPOSE_RESEARCH:
+        if design in {
+            "Case series / case report",
+            "Experimental / animal / basic science",
+            "Molecular / mechanistic study",
+        }:
+            return "Tier 4: Low priority"
+        if design == "Editorial / correspondence / commentary":
+            gap_language = has_any(
+                text,
+                GAP_TERMS
+                + [
+                    "uncertainty",
+                    "uncertainties",
+                    "limitation",
+                    "limitations",
+                    "future research",
+                    "further studies",
+                ],
+            )
+            return "Tier 3: Background" if gap_language else "Tier 4: Low priority"
         if (
-            direct
+            strong_direct
             and design in {
                 "Landmark randomized trial",
                 "Randomized controlled trial",
-                "Large multicentre prospective cohort",
-                "Large retrospective / database study",
-                "Diagnostic accuracy study",
                 "Systematic review / meta-analysis",
             }
             and total >= 55
         ):
             return "Tier 1: Must-read"
         if design in {"Narrative review", "Landmark physiological review"}:
-            return "Tier 2: Useful supporting" if major_review and direct else "Tier 3: Background"
-        if direct and total >= 45:
+            return "Tier 2: Useful supporting" if major_review and strong_direct else "Tier 3: Background"
+        if strong_direct and design in {
+            "Large multicentre prospective cohort",
+            "Large retrospective / database study",
+            "Diagnostic accuracy study",
+            "Guideline / consensus / society statement",
+        } and total >= 45:
             return "Tier 2: Useful supporting"
-        if topic_level in {"direct", "abstract_only", "partial", "background"}:
+        if direct_or_abstract and total >= 45:
+            return "Tier 2: Useful supporting"
+        if topic_level in {"direct", "direct_synonym", "strong_component", "abstract_only", "parent", "partial", "parallel", "background"}:
             return "Tier 3: Background"
         return "Tier 4: Low priority"
 
     if purpose == SEARCH_PURPOSE_DEEP:
-        if direct and (paper.get("expected_paper_reason") or major_review or total >= 65):
+        if strong_direct and (
+            major_review
+            or design in {
+                "Narrative review",
+                "Landmark physiological review",
+                "Guideline / consensus / society statement",
+                "Systematic review / meta-analysis",
+                "Landmark randomized trial",
+                "Randomized controlled trial",
+            }
+        ):
             return "Tier 1: Must-read"
-        if topic_level in {"direct", "abstract_only"} and relevance >= 18:
+        if direct_or_abstract and relevance >= 18:
             return "Tier 2: Useful supporting"
-        if topic_level in {"partial", "background"}:
+        if topic_level in {"parent", "partial", "parallel", "background"}:
             return "Tier 3: Background"
         return "Tier 4: Low priority"
 
     if purpose == SEARCH_PURPOSE_RARE:
-        if direct and (design == "Case series / case report" or rare_signal):
+        rare_editorial = design == "Editorial / correspondence / commentary" and rare_signal
+        if strong_direct and (design == "Case series / case report" or rare_signal or rare_editorial):
             return "Tier 1: Must-read"
-        if topic_level in {"direct", "abstract_only", "partial"} and (
-            design == "Case series / case report" or rare_signal
+        if topic_level in {"direct", "direct_synonym", "strong_component", "abstract_only", "parent", "partial"} and (
+            design == "Case series / case report" or rare_signal or rare_editorial
         ):
             return "Tier 2: Useful supporting"
-        if topic_level in {"direct", "abstract_only", "partial", "background"}:
+        if topic_level in {"direct", "direct_synonym", "strong_component", "abstract_only", "parent", "partial", "parallel", "background"}:
             return "Tier 3: Background"
         return "Tier 4: Low priority"
 
@@ -2836,15 +3328,14 @@ def apply_tier_caps(
     topic_max_tier_order: int,
     context: SearchContext,
 ) -> tuple[str, str]:
-    if paper.get("expected_paper_reason"):
-        return "Tier 1: Must-read", "landmark seed — promoted to Tier 1 regardless of gate/quality caps"
-
     purpose = normalized_search_purpose(context.search_purpose)
     cap_order = topic_max_tier_order
     topic_level = paper.get("topic_match_level", "")
-    if purpose == SEARCH_PURPOSE_DEEP and topic_level in {"partial", "background"}:
+    if paper.get("expected_paper_reason") and topic_level == "background":
         cap_order = min(cap_order, 3)
-    if purpose == SEARCH_PURPOSE_RARE and topic_level == "partial":
+    if purpose == SEARCH_PURPOSE_DEEP and topic_level in {"parent", "partial", "parallel"}:
+        cap_order = min(cap_order, 3)
+    if purpose == SEARCH_PURPOSE_RARE and topic_level in {"parent", "partial"}:
         cap_order = min(cap_order, 2)
     elif purpose == SEARCH_PURPOSE_RARE and topic_level == "background":
         cap_order = min(cap_order, 3)
@@ -2854,7 +3345,7 @@ def apply_tier_caps(
             f"Rule 0 topic gate caps this paper at {TIER_BY_ORDER[cap_order]}"
         )
 
-    if purpose not in {SEARCH_PURPOSE_DEEP, SEARCH_PURPOSE_RARE}:
+    if purpose not in {SEARCH_PURPOSE_DEEP, SEARCH_PURPOSE_RARE} and not paper.get("expected_paper_reason"):
         quality_cap_order, quality_reason = quality_data_cap(paper)
         if quality_cap_order > cap_order:
             cap_order = quality_cap_order
@@ -2886,6 +3377,20 @@ def mode_specific_tier_cap(paper: dict[str, Any], context: SearchContext) -> tup
         "Landmark physiological review",
     } and not (paper.get("mandatory_review_candidate") or paper.get("expected_paper_reason")):
         return 3, "research mode caps narrative/background reviews at Tier 3 unless landmark or gap-defining"
+
+    if purpose == SEARCH_PURPOSE_RESEARCH and design in {
+        "Case series / case report",
+        "Experimental / animal / basic science",
+        "Molecular / mechanistic study",
+    } and not paper.get("expected_paper_reason"):
+        return 4, "research mode caps case reports and low-level mechanistic evidence at Tier 4"
+
+    if (
+        purpose == SEARCH_PURPOSE_RESEARCH
+        and design == "Editorial / correspondence / commentary"
+        and not paper.get("expected_paper_reason")
+    ):
+        return 3, "research mode keeps editorials/correspondence only as background"
 
     if purpose == SEARCH_PURPOSE_KNOWLEDGE and design in {
         "Case series / case report",
@@ -3199,6 +3704,10 @@ def why_included(paper: dict[str, Any]) -> str:
         reasons.append("quartile not verified")
     if paper.get("recent_high_quality_note"):
         reasons.append(paper["recent_high_quality_note"])
+    if paper.get("purpose_fit_reason"):
+        reasons.append(paper["purpose_fit_reason"])
+    if paper.get("penalty_notes"):
+        reasons.append("penalties: " + "; ".join(paper["penalty_notes"]))
     if paper.get("tier_cap_reason"):
         reasons.append(paper["tier_cap_reason"])
     return "; ".join(reasons)

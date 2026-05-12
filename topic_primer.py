@@ -39,6 +39,7 @@ MAX_EXPECTED_PAPERS = 12
 MAX_EXPANSION_TERMS = 20
 MAX_MUST_INCLUDE = 15
 MAX_PENALTY_RULES = 8
+MAX_SEMANTIC_TERMS = 12
 
 VALID_CATEGORIES = (
     "Major guideline / consensus",
@@ -94,6 +95,12 @@ class TopicPrimer:
     expected_categories: tuple[str, ...]
     status: str  # "generated" | "cached" | "unavailable"
     notes: tuple[str, ...] = ()
+    direct_synonyms: tuple[str, ...] = ()
+    component_concepts: tuple[str, ...] = ()
+    parent_topics: tuple[str, ...] = ()
+    parallel_topics: tuple[str, ...] = ()
+    mechanism_terms: tuple[str, ...] = ()
+    abbreviations: tuple[str, ...] = ()
 
     def to_profile_dict(self) -> dict[str, Any]:
         normalized = _normalize_topic_key(self.topic)
@@ -103,6 +110,12 @@ class TopicPrimer:
             "display_name": self.topic.strip(),
             "triggers": [t for t in triggers if t],
             "direct_phrases": [self.topic.strip().lower()],
+            "direct_synonyms": list(self.direct_synonyms),
+            "component_concepts": list(self.component_concepts),
+            "parent_topics": list(self.parent_topics),
+            "parallel_topics": list(self.parallel_topics),
+            "mechanism_terms": list(self.mechanism_terms),
+            "direct_acronyms": list(self.abbreviations),
             "expected_papers": [p.to_profile_dict() for p in self.expected_papers],
             "must_include_concepts": list(self.must_include_concepts),
             "penalize": [r.to_profile_dict() for r in self.penalize_rules],
@@ -136,6 +149,12 @@ PROMPT_INSTRUCTIONS = (
     "  and a reason.\n"
     "- query_expansion_terms: 5-15 synonyms, abbreviations, MeSH-style "
     "  alternatives, and related terms PubMed should also search.\n"
+    "- semantic_topic_gate: object with arrays for direct_synonyms, "
+    "  component_concepts, parent_topics, parallel_topics, mechanism_terms, "
+    "  and abbreviations. Use clinically equivalent terms, MeSH-like aliases, "
+    "  parent disease categories, related clinical syndromes, and component "
+    "  concepts. This gate decides whether a paper is direct evidence, a "
+    "  parent-topic fallback, a parallel-topic fallback, or only background.\n"
     "- population_priority: a short phrase like 'adult ICU', 'pediatric', "
     "  'pregnant patients', 'general adult'.\n"
     "- expected_categories: which paper categories the user should expect to "
@@ -180,6 +199,17 @@ GEMINI_RESPONSE_SCHEMA = {
         "query_expansion_terms": {
             "type": "ARRAY",
             "items": {"type": "STRING"},
+        },
+        "semantic_topic_gate": {
+            "type": "OBJECT",
+            "properties": {
+                "direct_synonyms": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "component_concepts": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "parent_topics": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "parallel_topics": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "mechanism_terms": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "abbreviations": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
         },
         "population_priority": {"type": "STRING"},
         "expected_categories": {
@@ -377,6 +407,9 @@ def _build_primer_from_payload(
     verified_papers = tuple(
         _verify_pmids(expected_candidates, email=email, api_key=api_key)
     )
+    semantic_gate = payload.get("semantic_topic_gate")
+    if not isinstance(semantic_gate, dict):
+        semantic_gate = {}
 
     notes: list[str] = []
     suggested = len(expected_candidates)
@@ -401,6 +434,24 @@ def _build_primer_from_payload(
         ),
         status=status,
         notes=tuple(notes),
+        direct_synonyms=_coerce_str_list(
+            semantic_gate.get("direct_synonyms"), max_items=MAX_SEMANTIC_TERMS
+        ),
+        component_concepts=_coerce_str_list(
+            semantic_gate.get("component_concepts"), max_items=MAX_SEMANTIC_TERMS
+        ),
+        parent_topics=_coerce_str_list(
+            semantic_gate.get("parent_topics"), max_items=MAX_SEMANTIC_TERMS
+        ),
+        parallel_topics=_coerce_str_list(
+            semantic_gate.get("parallel_topics"), max_items=MAX_SEMANTIC_TERMS
+        ),
+        mechanism_terms=_coerce_str_list(
+            semantic_gate.get("mechanism_terms"), max_items=MAX_SEMANTIC_TERMS
+        ),
+        abbreviations=_coerce_str_list(
+            semantic_gate.get("abbreviations"), max_items=MAX_SEMANTIC_TERMS
+        ),
     )
 
 
@@ -464,6 +515,12 @@ def _replace_status(primer: TopicPrimer, status: str) -> TopicPrimer:
         expected_categories=primer.expected_categories,
         status=status,
         notes=primer.notes,
+        direct_synonyms=primer.direct_synonyms,
+        component_concepts=primer.component_concepts,
+        parent_topics=primer.parent_topics,
+        parallel_topics=primer.parallel_topics,
+        mechanism_terms=primer.mechanism_terms,
+        abbreviations=primer.abbreviations,
     )
 
 

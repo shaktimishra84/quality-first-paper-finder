@@ -7,6 +7,7 @@ from paper_finder import (
     SEARCH_PURPOSE_RARE,
     SEARCH_PURPOSE_RESEARCH,
     SearchContext,
+    classify_topic_match,
     score_and_classify_paper,
     search_purpose_config,
 )
@@ -199,3 +200,54 @@ def test_editorial_correspondence_is_kept_in_deep_and_rare_modes() -> None:
     assert rare["study_design"] == "Editorial / correspondence / commentary"
     assert rare["tier"] in {"Tier 1: Must-read", "Tier 2: Useful supporting"}
     assert rare["publication_type"] == "Letter, Comment"
+
+
+def test_semantic_topic_gate_does_not_promote_component_overlap_to_full_concept() -> None:
+    gate = classify_topic_match(
+        "Pulmonary embolism presenting with shock: a case report",
+        "Massive pulmonary embolism with hemodynamic collapse and right ventricular failure.",
+        SearchContext(topic="cardiogenic shock in pulmonary embolism"),
+    )
+
+    assert gate["level"] == "strong_component"
+    assert gate["relevance_cap"] == 34
+    assert "component" in gate["gate"].lower()
+
+
+def test_semantic_topic_gate_treats_negated_component_as_parallel_fallback() -> None:
+    gate = classify_topic_match(
+        "Cardiogenic shock: current concepts and management",
+        "A broad review of cardiogenic shock without pulmonary embolism as a focus.",
+        SearchContext(topic="cardiogenic shock in pulmonary embolism"),
+    )
+
+    assert gate["level"] == "parallel"
+    assert gate["relevance_cap"] == 22
+    assert "parallel" in gate["gate"].lower()
+
+
+def test_research_mode_keeps_direct_case_reports_low_priority() -> None:
+    paper = {
+        "title": "Pulmonary embolism presenting with shock: a case report",
+        "abstract": "Massive pulmonary embolism with shock, hemodynamic collapse, and right ventricular failure is described.",
+        "publication_types": ["Case Reports"],
+        "journal": "Journal of Medical Case Reports",
+        "pmid": "444",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/444/",
+        "citation_count": 15,
+        "citation_source": "OpenAlex",
+        "year": 2024,
+    }
+
+    result = score_and_classify_paper(
+        paper,
+        SearchContext(
+            topic="cardiogenic shock in pulmonary embolism",
+            search_purpose=SEARCH_PURPOSE_RESEARCH,
+        ),
+        {},
+    )
+
+    assert result["topic_match_level"] == "strong_component"
+    assert result["study_design"] == "Case series / case report"
+    assert result["tier"] == "Tier 4: Low priority"
