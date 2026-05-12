@@ -4,9 +4,9 @@
 
 Purpose-aware PubMed evidence discovery for clinicians and researchers. Find landmark reviews, trials, guidelines, research gaps, and rare case literature with transparent evidence tiers.
 
-![CorePapers WhatsApp preview](static/corepapers-whatsapp-preview.png)
+![CorePapers WhatsApp preview](static/corepapers-social-preview-20260512.jpg)
 
-Use `app/static/corepapers-share.html` as the bot-readable share URL when the deployed app shell does not expose Open Graph tags to WhatsApp crawlers.
+Use `https://YOUR-APP.streamlit.app/app/static/corepapers-share.html?v=20260512` as the bot-readable share URL. Streamlit's main app shell does not expose server-rendered Open Graph tags to WhatsApp crawlers, so sharing the main app URL may not show the preview image.
 
 ## What it does
 

@@ -30,7 +30,7 @@ APP_PREVIEW_DESCRIPTION = (
     "Find landmark reviews, trials, guidelines, research gaps, and rare case "
     "literature with transparent evidence tiers."
 )
-APP_PREVIEW_IMAGE_FILENAME = "corepapers-whatsapp-preview.png"
+APP_PREVIEW_IMAGE_FILENAME = "corepapers-social-preview-20260512.jpg"
 
 
 st.set_page_config(
@@ -382,8 +382,10 @@ def inject_social_metadata() -> None:
           ensureMeta("property", "og:description", metadata.description);
           ensureMeta("property", "og:type", "website");
           ensureMeta("property", "og:image", imageUrl);
+          ensureMeta("property", "og:image:secure_url", imageUrl);
           ensureMeta("property", "og:image:width", "1200");
           ensureMeta("property", "og:image:height", "630");
+          ensureMeta("property", "og:image:type", "image/jpeg");
           ensureMeta("name", "twitter:card", "summary_large_image");
           ensureMeta("name", "twitter:title", metadata.title);
           ensureMeta("name", "twitter:description", metadata.description);
