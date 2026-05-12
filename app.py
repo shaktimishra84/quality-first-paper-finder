@@ -759,12 +759,6 @@ def migrate_legacy_search_purpose_state() -> None:
         del st.session_state["search_purpose"]
 
 
-def render_selected_mode_summary(search_purpose_label: str) -> None:
-    label = normalize_search_purpose_label(search_purpose_label)
-    description = str(SEARCH_MODE_UI_COPY[label]["description"])
-    st.info(f"**{label}**\n\n{description}")
-
-
 def render_mode_guide(search_purpose_label: str) -> None:
     selected_label = normalize_search_purpose_label(search_purpose_label)
     cards: list[str] = []
@@ -827,7 +821,6 @@ def render_search_form() -> tuple[str, str, dict, bool]:
     search_purpose_label = normalize_search_purpose_label(search_purpose_label)
     search_purpose = internal_search_purpose(search_purpose_label)
     purpose_config = search_purpose_config(search_purpose)
-    render_selected_mode_summary(search_purpose_label)
     render_mode_guide(search_purpose_label)
     with st.form("corepapers_search", clear_on_submit=False):
         topic = st.text_area(
