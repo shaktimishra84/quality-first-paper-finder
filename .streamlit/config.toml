@@ -5,3 +5,6 @@ backgroundColor    = "#f6f4ef"
 secondaryBackgroundColor = "#fdfbf6"
 textColor          = "#1a1815"
 font               = "sans serif"
+
+[server]
+enableStaticServing = true

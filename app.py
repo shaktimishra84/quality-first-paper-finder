@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -8,8 +9,11 @@ import streamlit as st
 
 from evidence_engine import build_evidence_review
 from paper_finder import (
+    SEARCH_PURPOSE_DEEP,
     SEARCH_PURPOSE_DEFAULT,
-    SEARCH_PURPOSE_OPTIONS,
+    SEARCH_PURPOSE_KNOWLEDGE,
+    SEARCH_PURPOSE_RARE,
+    SEARCH_PURPOSE_RESEARCH,
     SearchContext,
     parse_quartile_overrides,
     run_quality_first_search,
@@ -18,8 +22,19 @@ from paper_finder import (
 )
 
 
+APP_NAME = "CorePapers"
+APP_TAGLINE = "Verified Medical Literature Search"
+APP_PREVIEW_TITLE = f"{APP_NAME} | {APP_TAGLINE}"
+APP_PREVIEW_DESCRIPTION = (
+    "Purpose-aware PubMed evidence discovery for clinicians and researchers. "
+    "Find landmark reviews, trials, guidelines, research gaps, and rare case "
+    "literature with transparent evidence tiers."
+)
+APP_PREVIEW_IMAGE_FILENAME = "corepapers-whatsapp-preview.png"
+
+
 st.set_page_config(
-    page_title="CorePapers",
+    page_title=APP_PREVIEW_TITLE,
     layout="wide",
 )
 
@@ -333,7 +348,57 @@ def inject_global_styles() -> None:
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
+def inject_social_metadata() -> None:
+    metadata = {
+        "title": APP_PREVIEW_TITLE,
+        "description": APP_PREVIEW_DESCRIPTION,
+        "imagePath": f"app/static/{APP_PREVIEW_IMAGE_FILENAME}",
+    }
+    markup = f"""
+        <script>
+        (() => {{
+          const metadata = {json.dumps(metadata)};
+          const parentDocument = window.parent?.document || document;
+          const parentLocation = window.parent?.location || window.location;
+          const imageUrl = new URL(metadata.imagePath, parentLocation.href).href;
+
+          parentDocument.title = metadata.title;
+
+          function ensureMeta(attributeName, attributeValue, content) {{
+            let tag = parentDocument.head.querySelector(
+              `meta[${{attributeName}}="${{attributeValue}}"]`
+            );
+            if (!tag) {{
+              tag = parentDocument.createElement("meta");
+              tag.setAttribute(attributeName, attributeValue);
+              parentDocument.head.appendChild(tag);
+            }}
+            tag.setAttribute("content", content);
+          }}
+
+          ensureMeta("name", "description", metadata.description);
+          ensureMeta("property", "og:title", metadata.title);
+          ensureMeta("property", "og:site_name", "CorePapers");
+          ensureMeta("property", "og:description", metadata.description);
+          ensureMeta("property", "og:type", "website");
+          ensureMeta("property", "og:image", imageUrl);
+          ensureMeta("property", "og:image:width", "1200");
+          ensureMeta("property", "og:image:height", "630");
+          ensureMeta("name", "twitter:card", "summary_large_image");
+          ensureMeta("name", "twitter:title", metadata.title);
+          ensureMeta("name", "twitter:description", metadata.description);
+          ensureMeta("name", "twitter:image", imageUrl);
+        }})();
+        </script>
+        """
+    try:
+        st.html(markup, unsafe_allow_javascript=True)
+    except TypeError:
+        st.markdown(markup, unsafe_allow_html=True)
+
+
 inject_global_styles()
+inject_social_metadata()
 
 
 DISPLAY_COLUMNS = [
@@ -447,23 +512,33 @@ FULL_COLUMNS = [
 ]
 
 SEARCH_MODE_UI_COPY = {
-    "Knowledge / Learning": {
-        "label": "Best for teaching, lectures, and understanding a topic.",
-        "keeps": "Prioritizes reviews, guidelines, consensus papers, and foundational concepts.",
+    "Learning mode": {
+        "internal": SEARCH_PURPOSE_KNOWLEDGE,
+        "description": "Best for topic understanding. Prioritises guidelines, narrative reviews, systematic reviews, and landmark trials.",
     },
-    "Research": {
-        "label": "Best for thesis, proposal, and manuscript gap finding.",
-        "keeps": "Prioritizes RCTs, cohorts, registries, systematic reviews, and gap-defining evidence.",
+    "Research mode": {
+        "internal": SEARCH_PURPOSE_RESEARCH,
+        "description": "Best for research planning. Prioritises RCTs, meta-analyses, cohorts, diagnostic studies, and evidence gaps.",
     },
-    "Deep Search": {
-        "label": "Best for exhaustive collection before screening.",
-        "keeps": "Keeps all relevant designs and publication types, including editorials and case reports.",
+    "Deep search mode": {
+        "internal": SEARCH_PURPOSE_DEEP,
+        "description": "Best for exhaustive review. Includes broader related papers and lower-tier evidence, but ranks them transparently.",
     },
-    "Rare / Case Report": {
-        "label": "Best for unusual presentations, complications, and adverse events.",
-        "keeps": "Prioritizes case reports, case series, letters, correspondence, and weak-but-related records.",
+    "Rare / case mode": {
+        "internal": SEARCH_PURPOSE_RARE,
+        "description": "Best for rare diseases, case reports, correspondence, editorials, and uncommon presentations.",
     },
 }
+SEARCH_PURPOSE_UI_OPTIONS = list(SEARCH_MODE_UI_COPY)
+SEARCH_PURPOSE_UI_TO_INTERNAL = {
+    label: str(copy["internal"])
+    for label, copy in SEARCH_MODE_UI_COPY.items()
+}
+SEARCH_PURPOSE_INTERNAL_TO_UI = {
+    internal: label
+    for label, internal in SEARCH_PURPOSE_UI_TO_INTERNAL.items()
+}
+SEARCH_PURPOSE_UI_DEFAULT = SEARCH_PURPOSE_INTERNAL_TO_UI[SEARCH_PURPOSE_DEFAULT]
 
 
 def e(value: object) -> str:
@@ -649,25 +724,64 @@ def render_mini_stats(items: list[tuple[str, object, str]]) -> None:
 
 def render_app_header() -> None:
     render_html(
-        """
+        f"""
         <div class="page-head">
-          <div class="eyebrow">Verified medical literature search</div>
-          <h1 class="title">CorePapers</h1>
+          <div class="eyebrow">{e(APP_TAGLINE)}</div>
+          <h1 class="title">{e(APP_NAME)}</h1>
           <p class="lede">
-            Search the evidence and keep the uncertainty visible. Purpose-aware PubMed discovery
-            with landmark recovery, citation checks, evidence hierarchy, and transparent tiering.
+            {e(APP_PREVIEW_DESCRIPTION)}
           </p>
         </div>
         """
     )
 
 
-def render_mode_hint(search_purpose: str) -> None:
-    copy = SEARCH_MODE_UI_COPY.get(search_purpose, {})
-    label = copy.get("label") or ""
-    keeps = copy.get("keeps") or ""
+def normalize_search_purpose_label(search_purpose_label: str) -> str:
+    if search_purpose_label in SEARCH_MODE_UI_COPY:
+        return search_purpose_label
+    return SEARCH_PURPOSE_INTERNAL_TO_UI.get(search_purpose_label, SEARCH_PURPOSE_UI_DEFAULT)
+
+
+def internal_search_purpose(search_purpose_label: str) -> str:
+    label = normalize_search_purpose_label(search_purpose_label)
+    return SEARCH_PURPOSE_UI_TO_INTERNAL[label]
+
+
+def display_search_purpose(search_purpose: str) -> str:
+    return normalize_search_purpose_label(search_purpose)
+
+
+def migrate_legacy_search_purpose_state() -> None:
+    legacy_value = st.session_state.get("search_purpose")
+    if legacy_value and "search_purpose_label" not in st.session_state:
+        st.session_state["search_purpose_label"] = normalize_search_purpose_label(str(legacy_value))
+    if "search_purpose" in st.session_state:
+        del st.session_state["search_purpose"]
+
+
+def render_selected_mode_summary(search_purpose_label: str) -> None:
+    label = normalize_search_purpose_label(search_purpose_label)
+    description = str(SEARCH_MODE_UI_COPY[label]["description"])
+    st.info(f"**{label}**\n\n{description}")
+
+
+def render_mode_guide(search_purpose_label: str) -> None:
+    selected_label = normalize_search_purpose_label(search_purpose_label)
+    cards: list[str] = []
+    for label, copy in SEARCH_MODE_UI_COPY.items():
+        state_class = " selected" if label == selected_label else ""
+        state = "Selected" if label == selected_label else "Mode"
+        cards.append(
+            f"""
+            <div class="mode-card{state_class}">
+              <div class="mode-card-state">{e(state)}</div>
+              <div class="mode-card-title">{e(label)}</div>
+              <div class="mode-card-copy">{e(copy["description"])}</div>
+            </div>
+            """
+        )
     render_html(
-        f'<div class="mode-note">{e(label)} {e(keeps)}</div>',
+        f'<div class="mode-guide">{"".join(cards)}</div>',
     )
 
 
@@ -675,24 +789,46 @@ def render_sidebar_intro() -> None:
     render_html(
         """
         <div class="rail-card">
-          <div class="rail-kicker">Advanced search</div>
+          <div class="rail-kicker">Clinical context</div>
           <div class="rail-title">Optional refinements</div>
-          <div class="rail-copy">Use these only when you need PICO structure, manual landmark notes, API keys, or journal quartile overrides.</div>
+          <div class="rail-copy">Add PICO details only when they sharpen the question. CorePapers handles source discovery automatically.</div>
         </div>
         """
     )
 
 
+def app_secret(name: str) -> str:
+    try:
+        return str(st.secrets.get(name, "") or "").strip()
+    except Exception:
+        return ""
+
+
 def render_search_form() -> tuple[str, str, dict, bool]:
+    migrate_legacy_search_purpose_state()
     render_html(
         """
         <div class="search-shell">
           <div class="section-kicker">New search</div>
-          <div class="search-title">Enter the clinical question first.</div>
+          <div class="search-title">Choose a purpose, then enter the clinical question.</div>
           <div class="search-copy">CorePapers will choose retrieval depth, sections, and ranking behavior from the purpose you select.</div>
         </div>
         """
     )
+    search_purpose_label = st.segmented_control(
+        "Search purpose",
+        options=SEARCH_PURPOSE_UI_OPTIONS,
+        default=SEARCH_PURPOSE_UI_DEFAULT,
+        required=True,
+        help="Choose why you are searching. The app selects retrieval depth and ranking emphasis.",
+        width="stretch",
+        key="search_purpose_label",
+    ) or SEARCH_PURPOSE_UI_DEFAULT
+    search_purpose_label = normalize_search_purpose_label(search_purpose_label)
+    search_purpose = internal_search_purpose(search_purpose_label)
+    purpose_config = search_purpose_config(search_purpose)
+    render_selected_mode_summary(search_purpose_label)
+    render_mode_guide(search_purpose_label)
     with st.form("corepapers_search", clear_on_submit=False):
         topic = st.text_area(
             "Topic or PICO question",
@@ -701,25 +837,19 @@ def render_search_form() -> tuple[str, str, dict, bool]:
             help="Use a disease, clinical question, exposure, complication, or rare presentation.",
             key="topic_query",
         )
-        search_purpose = st.segmented_control(
-            "Search purpose",
-            options=SEARCH_PURPOSE_OPTIONS,
-            default=SEARCH_PURPOSE_DEFAULT,
-            required=True,
-            help="Choose why you are searching. The app selects retrieval depth and ranking emphasis.",
-            width="stretch",
-            key="search_purpose",
-        ) or SEARCH_PURPOSE_DEFAULT
-        purpose_config = search_purpose_config(search_purpose)
-        render_mode_hint(search_purpose)
         submitted = st.form_submit_button("Run evidence search", type="primary", use_container_width=True)
     return topic, search_purpose, purpose_config, submitted
 
 
 def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, object]:
+    google_notes = ""
+    email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
+    ncbi_api_key = app_secret("ncbi_api_key")
+    gemini_api_key = app_secret("gemini_api_key")
+    quartile_file = None
     with st.sidebar:
         render_sidebar_intro()
-        with st.expander("Advanced search", expanded=False):
+        with st.expander("PICO details", expanded=False):
             question_type = st.selectbox(
                 "Question type",
                 [
@@ -734,52 +864,6 @@ def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, s
             intervention = st.text_input("Intervention or exposure", placeholder="Hydrocortisone")
             comparator = st.text_input("Comparator", placeholder="Placebo or usual care")
             outcome = st.text_input("Outcome", placeholder="Mortality, recurrence")
-            google_notes = st.text_area(
-                "Manual Google Scholar notes",
-                placeholder="Known missing landmark titles or citation observations.",
-                height=88,
-            )
-            email = st.text_input("NCBI email", placeholder="Optional")
-            secret_api_key = ""
-            try:
-                secret_api_key = str(st.secrets.get("ncbi_api_key", "") or "")
-            except Exception:
-                secret_api_key = ""
-            api_key_help = (
-                "Loaded from app secrets (st.secrets['ncbi_api_key'])."
-                if secret_api_key
-                else "Optional. Free at ncbi.nlm.nih.gov/account; raises rate limit 3 to 10 req/s."
-            )
-            api_key_field = st.text_input(
-                "NCBI API key",
-                placeholder="Loaded from app secrets" if secret_api_key else "Optional",
-                type="password",
-                help=api_key_help,
-            )
-            ncbi_api_key = (api_key_field or secret_api_key or "").strip()
-
-            secret_gemini_key = ""
-            try:
-                secret_gemini_key = str(st.secrets.get("gemini_api_key", "") or "")
-            except Exception:
-                secret_gemini_key = ""
-            gemini_help = (
-                "Loaded from app secrets (st.secrets['gemini_api_key'])."
-                if secret_gemini_key
-                else "Optional. Free at aistudio.google.com/apikey. Generates a topic primer for un-profiled topics."
-            )
-            gemini_field = st.text_input(
-                "Gemini API key",
-                placeholder="Loaded from app secrets" if secret_gemini_key else "Optional",
-                type="password",
-                help=gemini_help,
-            )
-            gemini_api_key = (gemini_field or secret_gemini_key or "").strip()
-            quartile_file = st.file_uploader(
-                "Journal quartile CSV",
-                type=["csv"],
-                help="Optional columns: journal, quartile, quartile_source.",
-            )
     return (
         question_type,
         population,
@@ -932,6 +1016,7 @@ def render_start_state() -> None:
 
 def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
     search_mode = result.get("search_purpose") or result.get("search_mode") or "Search"
+    search_mode_label = display_search_purpose(search_mode)
     effective_topic = result.get("topic_used", topic)
     search_date = result.get("search_date", "")
     accepted = len(df)
@@ -942,7 +1027,7 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
         meta.append(f"searched {search_date}")
 
     chips: list[str] = [
-        context_chip(f"Mode: {search_mode}", "accent"),
+        context_chip(f"Mode: {search_mode_label}", "accent"),
         context_chip(f"{fmt_int(accepted)} admitted", "muted"),
         context_chip(f"{fmt_int(tier_1)} Tier 1", "warn" if tier_1 else "muted"),
         context_chip(f"{fmt_int(result_source_count(result))} source paths", "muted"),
@@ -1096,8 +1181,9 @@ def render_api_discovery(result: dict) -> None:
 
     with st.expander("API discovery supervisor", expanded=False):
         st.caption(
-            "Verified candidate PMIDs gathered before scoring from PubMed exact searches, "
-            "Europe PMC, OpenAlex, and PubMed related-article expansion."
+            "Verified candidate PMIDs gathered before scoring from PubMed, Europe PMC, Crossref, "
+            "OpenAlex, Semantic Scholar, Unpaywall, ClinicalTrials.gov, medRxiv/bioRxiv, "
+            "and PubMed related-article expansion."
         )
         render_mini_stats(
             [
@@ -1109,13 +1195,19 @@ def render_api_discovery(result: dict) -> None:
 
         source_df = pd.DataFrame(sources)
         if not source_df.empty:
-            if "pmids" in source_df.columns:
-                source_df["pmids"] = source_df["pmids"].apply(
+            for list_col in ["pmids", "dois", "trial_ids"]:
+                if list_col not in source_df.columns:
+                    continue
+                source_df[list_col] = source_df[list_col].apply(
                     lambda values: ", ".join(str(value) for value in values)
                     if isinstance(values, list)
                     else str(values)
                 )
-            show_cols = [col for col in ["source", "count", "query", "pmids"] if col in source_df.columns]
+            show_cols = [
+                col
+                for col in ["source", "count", "doi_count", "trial_count", "query", "pmids", "dois", "trial_ids"]
+                if col in source_df.columns
+            ]
             st.dataframe(
                 source_df[show_cols],
                 use_container_width=True,
@@ -1123,8 +1215,12 @@ def render_api_discovery(result: dict) -> None:
                 column_config={
                     "source": st.column_config.TextColumn("Source", width="medium"),
                     "count": st.column_config.NumberColumn("PMIDs", width="small"),
+                    "doi_count": st.column_config.NumberColumn("DOIs", width="small"),
+                    "trial_count": st.column_config.NumberColumn("Trials", width="small"),
                     "query": st.column_config.TextColumn("Query / seed", width="large"),
                     "pmids": st.column_config.TextColumn("PMIDs", width="medium"),
+                    "dois": st.column_config.TextColumn("DOIs", width="medium"),
+                    "trial_ids": st.column_config.TextColumn("Trial IDs", width="medium"),
                 },
             )
         api_messages = (discovery.get("warnings", []) or []) + (discovery.get("errors", []) or [])
@@ -1144,7 +1240,7 @@ def render_empty_source_state(result: dict, df: pd.DataFrame) -> None:
         )
     else:
         title = "No verified papers were returned."
-        body = "Broaden the topic, try Deep Search, or add known landmark titles in manual notes."
+        body = "Broaden the topic, try Deep search mode, or add more PICO detail."
     render_html(
         f"""
         <div class="empty-panel">
@@ -1255,12 +1351,13 @@ def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) 
         st.warning("No papers were admitted.")
         return
     search_mode = result.get("search_purpose") or result.get("search_mode") or ""
+    search_mode_label = display_search_purpose(search_mode)
     sections = section_order_for_mode(search_mode)
     discovered = [section for section in df.get("reading_section", pd.Series(dtype=str)).dropna().unique()]
     ordered_sections = [section for section in sections if section in discovered]
     ordered_sections.extend(section for section in discovered if section not in ordered_sections)
 
-    st.caption(f"{len(df)} papers grouped for **{search_mode or 'selected search mode'}**. Ranking and tiers change with this purpose.")
+    st.caption(f"{len(df)} papers grouped for **{search_mode_label or 'selected search mode'}**. Ranking and tiers change with this purpose.")
     render_top_paper_cards(full_df, limit=3)
     render_section_overview(df, ordered_sections)
 
@@ -1357,8 +1454,9 @@ def render_section_overview(df: pd.DataFrame, ordered_sections: list[str]) -> No
 
 
 def section_order_for_mode(search_mode: str) -> list[str]:
+    normalized_mode = internal_search_purpose(search_mode)
     return {
-        "Knowledge / Learning": [
+        SEARCH_PURPOSE_KNOWLEDGE: [
             "Best review articles",
             "Guidelines and consensus",
             "Foundational concepts",
@@ -1366,7 +1464,7 @@ def section_order_for_mode(search_mode: str) -> list[str]:
             "Recent updates",
             "Background papers",
         ],
-        "Research": [
+        SEARCH_PURPOSE_RESEARCH: [
             "Key original research papers",
             "Randomized controlled trials",
             "Observational/cohort studies",
@@ -1375,7 +1473,7 @@ def section_order_for_mode(search_mode: str) -> list[str]:
             "Methods/outcome-defining papers",
             "Background reviews",
         ],
-        "Deep Search": [
+        SEARCH_PURPOSE_DEEP: [
             "Landmark/core papers",
             "Reviews and meta-analyses",
             "Trials",
@@ -1386,7 +1484,7 @@ def section_order_for_mode(search_mode: str) -> list[str]:
             "Editorials/correspondence",
             "Low-priority/background papers",
         ],
-        "Rare / Case Report": [
+        SEARCH_PURPOSE_RARE: [
             "Closest matching case reports",
             "Case series",
             "Rare complications",
@@ -1396,7 +1494,7 @@ def section_order_for_mode(search_mode: str) -> list[str]:
             "Background references",
             "Tier 4 / weak but related papers",
         ],
-    }.get(search_mode, [])
+    }.get(normalized_mode, [])
 
 
 def render_gap_map(gaps: list[dict], coverage: list[dict] | None = None) -> None:
@@ -1561,11 +1659,6 @@ def render_expected_papers(result: dict) -> None:
     if not missing_automatic.empty:
         st.subheader("Would have been missed by automatic layers")
         st.dataframe(missing_automatic, use_container_width=True, hide_index=True)
-
-    notes = result.get("manual_google_scholar_notes", "")
-    if notes:
-        st.subheader("Manual Google Scholar notes")
-        st.write(notes)
 
 
 def render_knowledge_summary(summary: dict) -> None:

@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace as dataclass_replace
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,7 +34,12 @@ MESH_MAX_DESCRIPTORS = 8
 MESH_MAX_QUERY_CLAUSES = 40
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper"
+SEMANTIC_SCHOLAR_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 EUROPE_PMC_SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+CROSSREF_WORKS_URL = "https://api.crossref.org/works"
+UNPAYWALL_SEARCH_URL = "https://api.unpaywall.org/v2/search/"
+CLINICALTRIALS_STUDIES_URL = "https://clinicaltrials.gov/api/v2/studies"
+BIORXIV_DETAILS_URL = "https://api.biorxiv.org/details"
 
 REQUEST_TIMEOUT = (5, 12)
 DEFAULT_HEADERS = {
@@ -212,7 +217,7 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Usually fastest",
-        "description": "Best reviews and conceptual papers.",
+        "description": "Best for topic understanding. Prioritises guidelines, narrative reviews, systematic reviews, and landmark trials.",
     },
     SEARCH_PURPOSE_RESEARCH: {
         "candidate_depth": 130,
@@ -221,7 +226,7 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": True,
         "runtime_label": "Deeper search",
-        "description": "Original studies, RCTs, cohorts, and gap-defining evidence.",
+        "description": "Best for research planning. Prioritises RCTs, meta-analyses, cohorts, diagnostic studies, and evidence gaps.",
     },
     SEARCH_PURPOSE_DEEP: {
         "candidate_depth": 200,
@@ -230,7 +235,7 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Most exhaustive",
-        "description": "Broad exhaustive collection across all publication types.",
+        "description": "Best for exhaustive review. Includes broader related papers and lower-tier evidence, but ranks them transparently.",
     },
     SEARCH_PURPOSE_RARE: {
         "candidate_depth": 160,
@@ -239,10 +244,14 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Broad rare-event search",
-        "description": "Unusual cases, rare complications, correspondence, editorials, and low-frequency reports.",
+        "description": "Best for rare diseases, case reports, correspondence, editorials, and uncommon presentations.",
     },
 }
 SEARCH_PURPOSE_ALIASES = {
+    "Learning mode": SEARCH_PURPOSE_KNOWLEDGE,
+    "Research mode": SEARCH_PURPOSE_RESEARCH,
+    "Deep search mode": SEARCH_PURPOSE_DEEP,
+    "Rare / case mode": SEARCH_PURPOSE_RARE,
     "Learn / teach topic": SEARCH_PURPOSE_KNOWLEDGE,
     "Find research gaps": SEARCH_PURPOSE_RESEARCH,
     "Systematic review pool": SEARCH_PURPOSE_DEEP,
@@ -902,8 +911,9 @@ def run_api_discovery_supervisor(
     """Use public scholarly APIs as a retrieval supervisor before scoring.
 
     The supervisor does not admit unverified citations. It gathers candidate
-    PMIDs from narrow PubMed searches, Europe PMC, OpenAlex, and PubMed related
-    articles, then the main pipeline fetches the actual PubMed records.
+    PMIDs from narrow PubMed searches and external scholarly APIs. DOI-only
+    sources are resolved back through PubMed before the main pipeline fetches
+    the actual PubMed records.
     """
     pmids: list[str] = []
     pmid_layers: dict[str, list[str]] = defaultdict(list)
@@ -934,6 +944,38 @@ def run_api_discovery_supervisor(
             }
         )
 
+    def add_dois(found_dois: list[str], layer: str, query: str, reason: str) -> None:
+        clean_dois = list(dict.fromkeys(clean_doi(str(doi)) for doi in found_dois if clean_doi(str(doi))))
+        try:
+            found_pmids = resolve_dois_to_pubmed_pmids(
+                clean_dois,
+                max_dois=max(4, min(10, per_query_limit)),
+                email=email,
+                api_key=ncbi_api_key,
+            )
+        except requests.RequestException as exc:
+            errors.append(f"{layer} DOI-to-PubMed resolution failed: {friendly_request_error(exc)}")
+            found_pmids = []
+        add_pmids(found_pmids, layer, query, reason)
+        sources[-1]["doi_count"] = len(clean_dois)
+        sources[-1]["dois"] = clean_dois[:25]
+
+    def add_clinical_trial_records(records: list[dict[str, str]], layer: str, query: str, reason: str) -> None:
+        try:
+            found_pmids = resolve_clinical_trial_pmids(
+                records,
+                max_trials=max(5, min(12, per_query_limit)),
+                email=email,
+                api_key=ncbi_api_key,
+            )
+        except requests.RequestException as exc:
+            errors.append(f"{layer} trial-to-PubMed resolution failed: {friendly_request_error(exc)}")
+            found_pmids = []
+        add_pmids(found_pmids, layer, query, reason)
+        trial_ids = [record["nct_id"] for record in records if record.get("nct_id")]
+        sources[-1]["trial_count"] = len(trial_ids)
+        sources[-1]["trial_ids"] = trial_ids[:25]
+
     for layer_name, query, retmax, reason in api_supervisor_pubmed_queries(context, per_query_limit):
         try:
             found = search_pubmed(query, retmax, email=email, api_key=ncbi_api_key)
@@ -948,10 +990,55 @@ def run_api_discovery_supervisor(
         except requests.RequestException as exc:
             errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
 
+    for layer_name, query, rows, reason in api_supervisor_crossref_queries(context, per_query_limit):
+        try:
+            found = search_crossref_dois(query, rows=rows, email=email)
+            add_dois(found, layer_name, query, reason)
+        except requests.RequestException as exc:
+            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+
     for layer_name, query, page_size, reason in api_supervisor_openalex_queries(context, per_query_limit):
         try:
             found = search_openalex_pmids(query, per_page=page_size, email=email)
             add_pmids(found, layer_name, query, reason)
+        except requests.RequestException as exc:
+            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+
+    for layer_name, query, limit, reason in api_supervisor_semantic_scholar_queries(context, per_query_limit):
+        try:
+            found_pmids, found_dois = search_semantic_scholar_identifiers(query, limit=limit)
+            add_pmids(found_pmids, layer_name, query, reason)
+            if found_dois:
+                add_dois(
+                    found_dois,
+                    f"{layer_name} DOI resolver",
+                    query,
+                    f"{reason}; DOI candidates resolved through PubMed",
+                )
+        except requests.RequestException as exc:
+            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+
+    if email.strip():
+        for layer_name, query, page_size, reason in api_supervisor_unpaywall_queries(context, per_query_limit):
+            try:
+                found = search_unpaywall_dois(query, page_size=page_size, email=email)
+                add_dois(found, layer_name, query, reason)
+            except requests.RequestException as exc:
+                errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+    else:
+        warnings.append("API supervisor - Unpaywall skipped: configure an email in app secrets to use the Unpaywall API.")
+
+    for layer_name, query, page_size, reason in api_supervisor_clinicaltrials_queries(context, per_query_limit):
+        try:
+            records = search_clinicaltrials_records(query, page_size=page_size)
+            add_clinical_trial_records(records, layer_name, query, reason)
+        except requests.RequestException as exc:
+            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+
+    for layer_name, server, interval, cursor, reason in api_supervisor_preprint_queries(context):
+        try:
+            found = search_biorxiv_medrxiv_dois(context, server=server, interval=interval, cursor=cursor)
+            add_dois(found, layer_name, f"{server}/{interval}/{cursor}", reason)
         except requests.RequestException as exc:
             errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
 
@@ -1083,6 +1170,133 @@ def api_supervisor_openalex_queries(
             )
         )
     return queries
+
+
+def api_supervisor_crossref_queries(
+    context: SearchContext,
+    per_query_limit: int,
+) -> list[tuple[str, str, int, str]]:
+    phrase = normalize_space(context.topic)
+    keyword_query = " ".join(api_supervisor_keywords(context)[:8])
+    queries: list[tuple[str, str, int, str]] = []
+    if phrase:
+        queries.append(
+            (
+                "API supervisor - Crossref exact",
+                phrase,
+                max(5, per_query_limit),
+                "Crossref bibliographic phrase search resolved through PubMed DOI matching",
+            )
+        )
+    if keyword_query and keyword_query.lower() != phrase.lower():
+        queries.append(
+            (
+                "API supervisor - Crossref concept",
+                keyword_query,
+                per_query_limit,
+                "Crossref concept search from topic keywords resolved through PubMed DOI matching",
+            )
+        )
+    return queries
+
+
+def api_supervisor_semantic_scholar_queries(
+    context: SearchContext,
+    per_query_limit: int,
+) -> list[tuple[str, str, int, str]]:
+    phrase = normalize_space(context.topic)
+    keyword_query = " ".join(api_supervisor_keywords(context)[:8])
+    queries: list[tuple[str, str, int, str]] = []
+    if phrase:
+        queries.append(
+            (
+                "API supervisor - Semantic Scholar exact",
+                phrase,
+                max(5, per_query_limit),
+                "Semantic Scholar paper search for PubMed/DOI identifiers",
+            )
+        )
+    if keyword_query and keyword_query.lower() != phrase.lower():
+        queries.append(
+            (
+                "API supervisor - Semantic Scholar concept",
+                keyword_query,
+                per_query_limit,
+                "Semantic Scholar concept search from topic keywords",
+            )
+        )
+    return queries
+
+
+def api_supervisor_unpaywall_queries(
+    context: SearchContext,
+    per_query_limit: int,
+) -> list[tuple[str, str, int, str]]:
+    phrase = normalize_space(context.topic)
+    keyword_query = " ".join(api_supervisor_keywords(context)[:8])
+    queries: list[tuple[str, str, int, str]] = []
+    if phrase:
+        queries.append(
+            (
+                "API supervisor - Unpaywall exact",
+                phrase,
+                max(5, per_query_limit),
+                "Unpaywall title/fulltext search resolved through PubMed DOI matching",
+            )
+        )
+    if keyword_query and keyword_query.lower() != phrase.lower():
+        queries.append(
+            (
+                "API supervisor - Unpaywall concept",
+                keyword_query,
+                per_query_limit,
+                "Unpaywall concept search from topic keywords resolved through PubMed DOI matching",
+            )
+        )
+    return queries
+
+
+def api_supervisor_clinicaltrials_queries(
+    context: SearchContext,
+    per_query_limit: int,
+) -> list[tuple[str, str, int, str]]:
+    phrase = normalize_space(context.topic)
+    keyword_query = " ".join(api_supervisor_keywords(context)[:8])
+    query = phrase or keyword_query
+    if not query:
+        return []
+    return [
+        (
+            "API supervisor - ClinicalTrials.gov",
+            query,
+            max(5, min(per_query_limit, 20)),
+            "ClinicalTrials.gov study search; NCT IDs resolved through PubMed trial publication links",
+        )
+    ]
+
+
+def api_supervisor_preprint_queries(
+    context: SearchContext,
+) -> list[tuple[str, str, str, int, str]]:
+    today = date.today()
+    start = today - timedelta(days=730)
+    interval = f"{start.isoformat()}/{today.isoformat()}"
+    return [
+        (
+            "API supervisor - medRxiv recent preprints",
+            "medrxiv",
+            interval,
+            0,
+            "Recent medRxiv preprint sweep filtered by topic keywords and resolved through PubMed DOI matching",
+        ),
+        (
+            "API supervisor - bioRxiv recent preprints",
+            "biorxiv",
+            interval,
+            0,
+            "Recent bioRxiv preprint sweep filtered by topic keywords and resolved through PubMed DOI matching",
+        ),
+    ]
 
 
 def api_supervisor_concept_query(context: SearchContext, field: str = "Title/Abstract") -> str:
@@ -1367,6 +1581,250 @@ def search_openalex_pmids(query: str, per_page: int = 15, email: str = "") -> li
             query.strip(),
             max(1, min(per_page, 50)),
             (email or "").strip(),
+        )
+    )
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_pubmed_pmids_for_doi(doi: str, email: str, api_key: str) -> tuple[str, ...]:
+    cleaned = clean_doi(doi)
+    if not cleaned:
+        return ()
+    return tuple(search_pubmed(f'"{pubmed_quote(cleaned)}"[AID]', retmax=5, email=email, api_key=api_key))
+
+
+def resolve_dois_to_pubmed_pmids(
+    dois: list[str],
+    max_dois: int = 12,
+    email: str = "",
+    api_key: str = "",
+) -> list[str]:
+    pmids: list[str] = []
+    for doi in list(dict.fromkeys(clean_doi(str(doi)) for doi in dois if clean_doi(str(doi))))[:max_dois]:
+        pmids.extend(
+            _cached_pubmed_pmids_for_doi(
+                doi,
+                (email or "").strip(),
+                (api_key or "").strip(),
+            )
+        )
+    return list(dict.fromkeys(normalize_pmid(pmid) for pmid in pmids if normalize_pmid(pmid)))
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_search_crossref_dois(query: str, rows: int, email: str) -> tuple[str, ...]:
+    params = {
+        "query.bibliographic": query,
+        "rows": str(max(1, min(rows, 50))),
+        "select": "DOI,title,type,published-print,published-online,container-title,is-referenced-by-count",
+    }
+    if email:
+        params["mailto"] = email
+    response = requests.get(
+        CROSSREF_WORKS_URL,
+        params=params,
+        headers=DEFAULT_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    items = response.json().get("message", {}).get("items", [])
+    dois: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        doi = clean_doi(str(item.get("DOI") or ""))
+        if doi:
+            dois.append(doi)
+    return tuple(dict.fromkeys(dois))
+
+
+def search_crossref_dois(query: str, rows: int = 15, email: str = "") -> list[str]:
+    return list(_cached_search_crossref_dois(query.strip(), max(1, min(rows, 50)), (email or "").strip()))
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_search_semantic_scholar_identifiers(query: str, limit: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    params = {
+        "query": query,
+        "limit": str(max(1, min(limit, 100))),
+        "fields": "title,year,url,externalIds,citationCount,journal",
+    }
+    response = requests.get(
+        SEMANTIC_SCHOLAR_SEARCH_URL,
+        params=params,
+        headers=DEFAULT_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    results = response.json().get("data", [])
+    pmids: list[str] = []
+    dois: list[str] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        external_ids = item.get("externalIds") or {}
+        if not isinstance(external_ids, dict):
+            continue
+        pmid = normalize_pmid(external_ids.get("PubMed") or external_ids.get("PMID"))
+        doi = clean_doi(str(external_ids.get("DOI") or ""))
+        if pmid:
+            pmids.append(pmid)
+        if doi:
+            dois.append(doi)
+    return tuple(dict.fromkeys(pmids)), tuple(dict.fromkeys(dois))
+
+
+def search_semantic_scholar_identifiers(query: str, limit: int = 15) -> tuple[list[str], list[str]]:
+    pmids, dois = _cached_search_semantic_scholar_identifiers(query.strip(), max(1, min(limit, 100)))
+    return list(pmids), list(dois)
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_search_unpaywall_dois(query: str, page_size: int, email: str) -> tuple[str, ...]:
+    params = {
+        "query": query,
+        "email": email,
+        "page": "1",
+        "page_size": str(max(1, min(page_size, 50))),
+    }
+    response = requests.get(
+        UNPAYWALL_SEARCH_URL,
+        params=params,
+        headers=DEFAULT_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    results = payload.get("results", []) if isinstance(payload, dict) else []
+    dois: list[str] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        response_item = item.get("response") if isinstance(item.get("response"), dict) else item
+        doi = clean_doi(str(response_item.get("doi") or ""))
+        if doi:
+            dois.append(doi)
+    return tuple(dict.fromkeys(dois))
+
+
+def search_unpaywall_dois(query: str, page_size: int = 15, email: str = "") -> list[str]:
+    return list(
+        _cached_search_unpaywall_dois(
+            query.strip(),
+            max(1, min(page_size, 50)),
+            (email or "").strip(),
+        )
+    )
+
+
+@functools.lru_cache(maxsize=128)
+def _cached_search_clinicaltrials_records(query: str, page_size: int) -> tuple[tuple[str, str], ...]:
+    params = {
+        "query.term": query,
+        "pageSize": str(max(1, min(page_size, 100))),
+        "format": "json",
+    }
+    response = requests.get(
+        CLINICALTRIALS_STUDIES_URL,
+        params=params,
+        headers=DEFAULT_HEADERS,
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    studies = response.json().get("studies", [])
+    records: list[tuple[str, str]] = []
+    for study in studies:
+        if not isinstance(study, dict):
+            continue
+        protocol = study.get("protocolSection") or {}
+        identification = protocol.get("identificationModule") or {}
+        nct_id = normalize_space(str(identification.get("nctId") or ""))
+        title = first_nonempty(
+            identification.get("briefTitle"),
+            identification.get("officialTitle"),
+        )
+        if nct_id:
+            records.append((nct_id, title))
+    return tuple(dict.fromkeys(records))
+
+
+def search_clinicaltrials_records(query: str, page_size: int = 10) -> list[dict[str, str]]:
+    return [
+        {"nct_id": nct_id, "title": title}
+        for nct_id, title in _cached_search_clinicaltrials_records(query.strip(), max(1, min(page_size, 100)))
+    ]
+
+
+def first_nonempty(*values: object) -> str:
+    for value in values:
+        text = normalize_space(str(value or ""))
+        if text:
+            return text
+    return ""
+
+
+def resolve_clinical_trial_pmids(
+    records: list[dict[str, str]],
+    max_trials: int = 8,
+    email: str = "",
+    api_key: str = "",
+) -> list[str]:
+    pmids: list[str] = []
+    for record in records[:max_trials]:
+        nct_id = normalize_space(record.get("nct_id", ""))
+        if not nct_id:
+            continue
+        query = f'"{pubmed_quote(nct_id)}"[SI] OR "{pubmed_quote(nct_id)}"[Title/Abstract]'
+        pmids.extend(search_pubmed(query, retmax=8, email=email, api_key=api_key))
+    return list(dict.fromkeys(normalize_pmid(pmid) for pmid in pmids if normalize_pmid(pmid)))
+
+
+@functools.lru_cache(maxsize=64)
+def _cached_search_biorxiv_medrxiv_dois(
+    topic_key: str,
+    keyword_key: tuple[str, ...],
+    server: str,
+    interval: str,
+    cursor: int,
+) -> tuple[str, ...]:
+    if server not in {"medrxiv", "biorxiv"}:
+        return ()
+    url = f"{BIORXIV_DETAILS_URL}/{server}/{interval}/{max(0, cursor)}/json"
+    response = requests.get(url, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    payload = response.json()
+    collection = payload.get("collection", []) if isinstance(payload, dict) else []
+    topic_terms = [term for term in keyword_key if term]
+    dois: list[str] = []
+    for item in collection:
+        if not isinstance(item, dict):
+            continue
+        haystack = normalize_space(
+            f"{item.get('title', '')} {item.get('abstract', '')} {item.get('category', '')}"
+        ).lower()
+        if topic_terms and not any(term in haystack for term in topic_terms):
+            continue
+        for doi_value in [item.get("published"), item.get("doi")]:
+            doi = clean_doi(str(doi_value or ""))
+            if doi and doi.upper() != "NA":
+                dois.append(doi)
+    return tuple(dict.fromkeys(dois))
+
+
+def search_biorxiv_medrxiv_dois(
+    context: SearchContext,
+    server: str,
+    interval: str,
+    cursor: int = 0,
+) -> list[str]:
+    terms = tuple(api_supervisor_keywords(context)[:8])
+    return list(
+        _cached_search_biorxiv_medrxiv_dois(
+            normalize_space(context.topic).lower(),
+            terms,
+            server,
+            interval,
+            cursor,
         )
     )
 
@@ -3824,7 +4282,7 @@ def generate_knowledge_summary(
     ]
     if manual_google_scholar_notes.strip():
         clinical_usefulness.append(
-            "Manual Google Scholar notes were recorded for cross-checking only and were not admitted as papers."
+            "Manual landmark notes were recorded for cross-checking only and were not admitted as papers."
         )
 
     return {
