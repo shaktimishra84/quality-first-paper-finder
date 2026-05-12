@@ -6,7 +6,7 @@ Purpose-aware PubMed evidence discovery for clinicians and researchers. Find lan
 
 ![CorePapers WhatsApp preview](static/corepapers-social-preview-20260512.jpg)
 
-Use `https://shaktimishra84.github.io/quality-first-paper-finder/` as the public social-share URL. Streamlit's main app shell does not expose server-rendered Open Graph tags to WhatsApp crawlers, and private Streamlit apps redirect crawlers to auth, so sharing the main app URL may not show the preview image.
+Use `https://shaktimishra84.github.io/quality-first-paper-finder/share-20260512.html` as the public social-share URL. Streamlit's main app shell does not expose server-rendered Open Graph tags to WhatsApp crawlers, and private Streamlit apps redirect crawlers to auth, so sharing the main app URL may not show the preview image.
 
 ## What it does
 
