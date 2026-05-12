@@ -667,7 +667,7 @@ def render_mode_hint(search_purpose: str) -> None:
     label = copy.get("label") or ""
     keeps = copy.get("keeps") or ""
     render_html(
-        f'<div class="rail-copy">{e(label)} {e(keeps)}</div>',
+        f'<div class="mode-note">{e(label)} {e(keeps)}</div>',
     )
 
 
@@ -675,24 +675,31 @@ def render_sidebar_intro() -> None:
     render_html(
         """
         <div class="rail-card">
-          <div class="rail-kicker">CorePapers</div>
-          <div class="rail-title">Build a focused evidence set</div>
-          <div class="rail-copy">Choose the purpose first. The app adjusts retrieval depth, tiering, and output sections automatically.</div>
+          <div class="rail-kicker">Advanced search</div>
+          <div class="rail-title">Optional refinements</div>
+          <div class="rail-copy">Use these only when you need PICO structure, manual landmark notes, API keys, or journal quartile overrides.</div>
         </div>
         """
     )
 
 
-def main() -> None:
-    render_app_header()
-
-    with st.sidebar:
-        render_sidebar_intro()
+def render_search_form() -> tuple[str, str, dict, bool]:
+    render_html(
+        """
+        <div class="search-shell">
+          <div class="section-kicker">New search</div>
+          <div class="search-title">Enter the clinical question first.</div>
+          <div class="search-copy">CorePapers will choose retrieval depth, sections, and ranking behavior from the purpose you select.</div>
+        </div>
+        """
+    )
+    with st.form("corepapers_search", clear_on_submit=False):
         topic = st.text_area(
             "Topic or PICO question",
             placeholder="cerebral venous thrombosis in adults; anticoagulation and recurrence",
-            height=118,
+            height=128,
             help="Use a disease, clinical question, exposure, complication, or rare presentation.",
+            key="topic_query",
         )
         search_purpose = st.segmented_control(
             "Search purpose",
@@ -701,11 +708,18 @@ def main() -> None:
             required=True,
             help="Choose why you are searching. The app selects retrieval depth and ranking emphasis.",
             width="stretch",
+            key="search_purpose",
         ) or SEARCH_PURPOSE_DEFAULT
         purpose_config = search_purpose_config(search_purpose)
         render_mode_hint(search_purpose)
+        submitted = st.form_submit_button("Run evidence search", type="primary", use_container_width=True)
+    return topic, search_purpose, purpose_config, submitted
 
-        with st.expander("PICO details", expanded=False):
+
+def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, object]:
+    with st.sidebar:
+        render_sidebar_intro()
+        with st.expander("Advanced search", expanded=False):
             question_type = st.selectbox(
                 "Question type",
                 [
@@ -725,20 +739,6 @@ def main() -> None:
                 placeholder="Known missing landmark titles or citation observations.",
                 height=88,
             )
-
-        render_html(
-            f"""
-            <div class="rail-card">
-              <div class="rail-kicker">Live summary</div>
-              <div class="rail-copy"><strong>Mode:</strong> {e(search_purpose)}</div>
-              <div class="rail-copy"><strong>Focus:</strong> {e(SEARCH_MODE_UI_COPY.get(search_purpose, {}).get("label", ""))}</div>
-            </div>
-            """
-        )
-
-        submitted = st.button("Run evidence search", type="primary", use_container_width=True)
-
-        with st.expander("Advanced controls", expanded=False):
             email = st.text_input("NCBI email", placeholder="Optional")
             secret_api_key = ""
             try:
@@ -780,6 +780,36 @@ def main() -> None:
                 type=["csv"],
                 help="Optional columns: journal, quartile, quartile_source.",
             )
+    return (
+        question_type,
+        population,
+        intervention,
+        comparator,
+        outcome,
+        google_notes,
+        email,
+        ncbi_api_key,
+        gemini_api_key,
+        quartile_file,
+    )
+
+
+def main() -> None:
+    render_app_header()
+
+    topic, search_purpose, purpose_config, submitted = render_search_form()
+    (
+        question_type,
+        population,
+        intervention,
+        comparator,
+        outcome,
+        google_notes,
+        email,
+        ncbi_api_key,
+        gemini_api_key,
+        quartile_file,
+    ) = render_advanced_sidebar()
 
     if submitted:
         if not topic.strip():

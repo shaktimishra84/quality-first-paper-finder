@@ -60,6 +60,59 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
   gap: 0.75rem;
 }
 
+.search-shell {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 22px 22px 0 0;
+  box-shadow: var(--shadow);
+  margin-top: 0.75rem;
+  padding: 1.1rem 1.15rem 0.55rem;
+}
+
+.search-title {
+  color: var(--ink);
+  font-family: "Newsreader", Georgia, serif;
+  font-size: 1.72rem;
+  font-weight: 620;
+  line-height: 1.1;
+  margin-top: 0.25rem;
+}
+
+.search-copy {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  margin-top: 0.35rem;
+  max-width: 780px;
+}
+
+[data-testid="stForm"] {
+  background: var(--paper) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0 0 22px 22px !important;
+  border-top: 0 !important;
+  box-shadow: var(--shadow);
+  margin-bottom: 1rem;
+  padding: 0.35rem 1.15rem 1.1rem;
+}
+
+[data-testid="stForm"] textarea {
+  min-height: 128px;
+}
+
+.mode-note {
+  background: var(--accent-soft);
+  border: 1px solid #c6ddd8;
+  border-radius: 14px;
+  color: var(--accent);
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.45;
+  margin: 0.25rem 0 0.5rem;
+  padding: 0.72rem 0.85rem;
+}
+
 .rail-card {
   border: 1px solid var(--border);
   border-radius: 18px;
