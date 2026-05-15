@@ -333,6 +333,12 @@ SEARCH_PURPOSE_ALIASES = {
     "Systematic review pool": SEARCH_PURPOSE_DEEP,
 }
 
+TOPIC_TEXT_REPLACEMENTS = {
+    "complianse": "compliance",
+    "complaince": "compliance",
+    "complience": "compliance",
+}
+
 
 def search_purpose_config(search_purpose: str) -> dict[str, Any]:
     normalized = normalized_search_purpose(search_purpose)
@@ -385,17 +391,27 @@ def expand_acronyms(topic: str) -> str:
     if not topic:
         return topic
     acronyms = load_acronyms()
-    if not acronyms:
-        return topic
     text = normalize_space(topic).lower()
+    for misspelling, replacement in TOPIC_TEXT_REPLACEMENTS.items():
+        pattern = r"(?<![a-z0-9])" + re.escape(misspelling) + r"(?![a-z0-9])"
+        text = re.sub(pattern, replacement, text)
+
+    if not acronyms:
+        return text if text != normalize_space(topic).lower() else topic
     if text in acronyms:
         return acronyms[text]
+    expanded = text
+    for short, long in sorted(acronyms.items(), key=lambda item: len(item[0]), reverse=True):
+        if " " not in short and "-" not in short:
+            continue
+        pattern = r"(?<![a-z0-9])" + re.escape(short).replace(r"\ ", r"[\s-]+") + r"(?![a-z0-9])"
+        expanded = re.sub(pattern, long, expanded)
     words = text.split()
     if not words:
         return topic
-    expanded_words = [acronyms.get(word, word) for word in words]
+    expanded_words = [acronyms.get(word, word) for word in expanded.split()]
     expanded = " ".join(expanded_words)
-    return expanded if expanded != text else topic
+    return expanded if expanded != normalize_space(topic).lower() else topic
 
 
 def expected_paper_order(profile: dict[str, Any] | None) -> dict[str, int]:

@@ -9,6 +9,7 @@ from paper_finder import (
     SearchContext,
     build_search_layers,
     classify_topic_match,
+    expand_acronyms,
     score_and_classify_paper,
     search_purpose_config,
     user_intent_terms,
@@ -374,3 +375,64 @@ def test_research_mode_keeps_direct_case_reports_low_priority() -> None:
     assert result["topic_match_level"] == "strong_component"
     assert result["study_design"] == "Case series / case report"
     assert result["tier"] == "Tier 4: Low priority"
+
+
+def test_cam_icu_typo_expands_to_specific_delirium_tool() -> None:
+    expanded = expand_acronyms("complianse of cam icu")
+
+    assert expanded == "compliance of confusion assessment method for the intensive care unit"
+
+
+def test_cam_icu_compliance_search_layers_keep_specific_intent() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+
+    layers = build_search_layers(context, candidate_depth=30)
+    joined_queries = " ".join(layer.query for layer in layers)
+
+    assert "CAM-ICU" in joined_queries
+    assert "Confusion Assessment Method for the Intensive Care Unit" in joined_queries
+    assert "compliance" in joined_queries
+    assert "delirium" in joined_queries
+
+
+def test_cam_icu_compliance_downranks_generic_icu_papers() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    relevant = {
+        "title": "Improving CAM-ICU compliance through nurse education in the intensive care unit",
+        "abstract": (
+            "CAM-ICU delirium screening compliance and adherence improved after "
+            "implementation of nurse education in critical care."
+        ),
+        "publication_types": ["Journal Article", "Observational Study"],
+        "journal": "Critical Care Nurse",
+        "pmid": "111",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/111/",
+        "citation_count": 25,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    off_topic = {
+        "title": "Measurement of irradiation doses secondary to bedside radiographs in a medical intensive care unit",
+        "abstract": "A quality audit measured radiograph exposure among patients in a medical intensive care unit.",
+        "publication_types": ["Journal Article"],
+        "journal": "Intensive Care Medicine",
+        "pmid": "222",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/222/",
+        "citation_count": 60,
+        "citation_source": "OpenAlex",
+        "year": 2020,
+    }
+
+    relevant_scored = score_and_classify_paper(relevant, context, {})
+    off_topic_scored = score_and_classify_paper(off_topic, context, {})
+
+    assert relevant_scored["topic_match_level"] in {"direct", "direct_synonym", "strong_component", "abstract_only"}
+    assert off_topic_scored["topic_match_level"] == "noise"
+    assert off_topic_scored["tier"] == "Noise / manual review"
+    assert relevant_scored["total_score"] > off_topic_scored["total_score"]
