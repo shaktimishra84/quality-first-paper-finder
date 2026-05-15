@@ -865,9 +865,10 @@ def render_search_form() -> tuple[str, str, dict, bool]:
 
 def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, object]:
     google_notes = ""
-    secret_email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
-    secret_ncbi_api_key = app_secret("ncbi_api_key")
-    secret_gemini_api_key = app_secret("gemini_api_key")
+    email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
+    ncbi_api_key = app_secret("ncbi_api_key")
+    gemini_api_key = app_secret("gemini_api_key")
+    quartile_file = None
     with st.sidebar:
         render_sidebar_intro()
         with st.expander("PICO details", expanded=False):
@@ -886,55 +887,6 @@ def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, s
             comparator = st.text_input("Comparator", placeholder="Placebo or usual care")
             outcome = st.text_input("Outcome", placeholder="Mortality, recurrence")
 
-        with st.expander("API keys and contact", expanded=False):
-            st.caption(
-                "Keys set in Streamlit secrets are used by default. Values entered here "
-                "override the secret for this session only and are never stored."
-            )
-            email_input = st.text_input(
-                "Contact email (NCBI / Unpaywall)",
-                value="",
-                placeholder=secret_email or "you@example.com",
-                help=(
-                    "Required by NCBI E-utilities and Unpaywall for polite use. "
-                    "Defaults to the secret-managed email if left blank."
-                ),
-                key="ncbi_email_input",
-            )
-            ncbi_api_key_input = st.text_input(
-                "NCBI API key (optional)",
-                value="",
-                type="password",
-                placeholder="••••••••" if secret_ncbi_api_key else "Paste NCBI key",
-                help="Raises PubMed rate limit from 3 to 10 requests/sec.",
-                key="ncbi_api_key_input",
-            )
-            gemini_api_key_input = st.text_input(
-                "Gemini API key (for topic primer)",
-                value="",
-                type="password",
-                placeholder="••••••••" if secret_gemini_api_key else "Paste Gemini key",
-                help="Optional. Enables AI topic primer for topics without a built-in profile.",
-                key="gemini_api_key_input",
-            )
-
-        with st.expander("Journal quartile overrides", expanded=False):
-            st.caption(
-                "Upload a CSV with columns 'journal' and 'quartile' (Q1–Q4) to override "
-                "or supply missing journal quartile data. Used only for journal-quality scoring."
-            )
-            quartile_file = st.file_uploader(
-                "Quartile CSV",
-                type=["csv"],
-                accept_multiple_files=False,
-                help="Header row must include 'journal' and 'quartile'. Extra columns are ignored.",
-                key="quartile_csv_upload",
-                label_visibility="collapsed",
-            )
-
-    email = email_input.strip() or secret_email
-    ncbi_api_key = ncbi_api_key_input.strip() or secret_ncbi_api_key
-    gemini_api_key = gemini_api_key_input.strip() or secret_gemini_api_key
     return (
         question_type,
         population,
