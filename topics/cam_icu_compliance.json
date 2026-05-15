@@ -1,6 +1,6 @@
 {
   "key": "cam_icu_compliance",
-  "display_name": "CAM-ICU compliance",
+  "display_name": "CAM-ICU",
   "population_priority": "adult ICU / critical care delirium screening",
   "triggers": [
     "cam-icu",
@@ -47,9 +47,9 @@
     "cam-icu",
     "confusion assessment method",
     "delirium screening",
-    "delirium assessment",
-    "intensive care delirium",
+    "delirium assessment compliance",
     "screening compliance",
+    "compliance monitoring",
     "assessment adherence",
     "implementation"
   ],
@@ -61,15 +61,51 @@
   ],
   "must_include_concepts": [
     "cam-icu",
-    "confusion assessment",
+    "confusion assessment method",
     "delirium",
-    "screening",
-    "assessment",
     "compliance",
     "adherence",
     "implementation",
-    "nurses",
-    "intensive care"
+    "screening compliance",
+    "assessment adherence",
+    "compliance monitoring"
+  ],
+  "required_concept_groups": [
+    [
+      [
+        "cam-icu",
+        "cam icu",
+        "camicu",
+        "confusion assessment method",
+        "confusion assessment method for the intensive care unit"
+      ]
+    ],
+    [
+      [
+        "delirium"
+      ],
+      [
+        "intensive care",
+        "intensive care unit",
+        "icu",
+        "critical care"
+      ],
+      [
+        "delirium assessment",
+        "delirium screening",
+        "delirium monitoring",
+        "assessment tool",
+        "screening tool"
+      ],
+      [
+        "compliance",
+        "adherence",
+        "implementation",
+        "uptake",
+        "quality improvement",
+        "audit"
+      ]
+    ]
   ],
   "wrong_terms": [
     "complementary and alternative medicine",

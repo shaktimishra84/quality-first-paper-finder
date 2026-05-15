@@ -426,7 +426,6 @@ def profile_core_keywords(profile: dict[str, Any] | None) -> set[str]:
     core_values: list[str] = []
     for field in [
         "display_name",
-        "key",
         "direct_phrases",
         "direct_synonyms",
         "direct_acronyms",
@@ -3458,6 +3457,15 @@ def classify_profile_topic_match(
     wrong_terms = profile.get("wrong_terms", [])
     direct_acronyms = profile.get("direct_acronyms", [])
     acronym_context = profile.get("acronym_context", [])
+    for term in wrong_terms:
+        if term and term in text:
+            return topic_gate(
+                "Noise / manual review",
+                "noise",
+                8,
+                5,
+                f"off-topic exclusion signal: {term}",
+            )
     for acronym in direct_acronyms:
         if acronym and has_contextual_acronym(title_text, acronym, acronym_context):
             return topic_gate(
@@ -3476,6 +3484,9 @@ def classify_profile_topic_match(
                 2,
                 f"included as abstract-level match: {str(acronym).upper()} with topical context",
             )
+    required_gate = required_profile_concept_gate(text, profile)
+    if required_gate:
+        return required_gate
     semantic_gate = classify_semantic_topic_match(
         title_text,
         abstract_text,
@@ -3485,16 +3496,54 @@ def classify_profile_topic_match(
     )
     if semantic_gate["level"] in {"direct", "direct_synonym", "strong_component", "abstract_only"}:
         return semantic_gate
-    for term in wrong_terms:
-        if term and term in text:
-            return topic_gate(
-                "Noise / manual review",
-                "noise",
-                8,
-                5,
-                f"off-topic exclusion signal: {term}",
-            )
     return semantic_gate
+
+
+def required_profile_concept_gate(
+    text: str,
+    profile: dict[str, Any],
+) -> dict[str, Any] | None:
+    groups = profile.get("required_concept_groups", [])
+    if not groups:
+        return None
+    if profile_required_groups_match(text, groups):
+        return None
+
+    family_hits = term_hits(
+        [str(term).lower() for term in profile.get("family_terms", []) if term],
+        text,
+    )
+    if family_hits:
+        return topic_gate(
+            "Background match",
+            "background",
+            14,
+            4,
+            "related background, but missing the required CAM-ICU/compliance anchor",
+        )
+    return topic_gate(
+        "Noise / manual review",
+        "noise",
+        8,
+        5,
+        "missing required CAM-ICU/compliance topic anchor",
+    )
+
+
+def profile_required_groups_match(text: str, groups: list[Any]) -> bool:
+    for raw_group in groups:
+        if not isinstance(raw_group, list):
+            continue
+        matched_all_axes = True
+        for raw_axis in raw_group:
+            axis_terms = raw_axis if isinstance(raw_axis, list) else [raw_axis]
+            terms = [str(term).lower() for term in axis_terms if str(term).strip()]
+            if not terms or not any(semantic_term_in_text(term, text) for term in terms):
+                matched_all_axes = False
+                break
+        if matched_all_axes:
+            return True
+    return False
 
 
 def topic_gate(
@@ -4302,6 +4351,8 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
         return "Background papers"
 
     if purpose == SEARCH_PURPOSE_RESEARCH:
+        if tier_order >= 4 or topic_level in {"noise", "background", "parent", "parallel"}:
+            return "Low-priority/background papers"
         if "gap" in str(paper.get("search_layers", "")).lower() or has_any(text, GAP_TERMS):
             return "Research gaps"
         if design in {"Landmark randomized trial", "Randomized controlled trial"}:
@@ -4396,6 +4447,7 @@ def reading_section_order(search_mode: str) -> dict[str, int]:
             "Research gaps",
             "Methods/outcome-defining papers",
             "Background reviews",
+            "Low-priority/background papers",
         ],
         SEARCH_PURPOSE_DEEP: [
             "Landmark/core papers",

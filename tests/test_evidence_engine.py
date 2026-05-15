@@ -396,6 +396,7 @@ def test_cam_icu_compliance_search_layers_keep_specific_intent() -> None:
     assert "Confusion Assessment Method for the Intensive Care Unit" in joined_queries
     assert "compliance" in joined_queries
     assert "delirium" in joined_queries
+    assert "compliance" in user_intent_terms(context)
 
 
 def test_cam_icu_compliance_downranks_generic_icu_papers() -> None:
@@ -419,7 +420,10 @@ def test_cam_icu_compliance_downranks_generic_icu_papers() -> None:
     }
     off_topic = {
         "title": "Measurement of irradiation doses secondary to bedside radiographs in a medical intensive care unit",
-        "abstract": "A quality audit measured radiograph exposure among patients in a medical intensive care unit.",
+        "abstract": (
+            "A quality audit measured radiograph exposure among nurses and patients "
+            "in a medical intensive care unit."
+        ),
         "publication_types": ["Journal Article"],
         "journal": "Intensive Care Medicine",
         "pmid": "222",
@@ -436,3 +440,57 @@ def test_cam_icu_compliance_downranks_generic_icu_papers() -> None:
     assert off_topic_scored["topic_match_level"] == "noise"
     assert off_topic_scored["tier"] == "Noise / manual review"
     assert relevant_scored["total_score"] > off_topic_scored["total_score"]
+
+
+def test_cam_icu_compliance_requires_cam_or_compliance_anchor() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    generic_delirium = {
+        "title": "Nursing Understanding and Perceptions of Delirium in a Burn ICU",
+        "abstract": "This survey assessed current knowledge and beliefs about delirium among nurses in a burn ICU.",
+        "publication_types": ["Journal Article"],
+        "journal": "Journal of burn care & research",
+        "pmid": "333",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/333/",
+        "citation_count": 21,
+        "citation_source": "OpenAlex",
+        "year": 2019,
+    }
+
+    scored = score_and_classify_paper(generic_delirium, context, {})
+
+    assert scored["topic_match_level"] in {"background", "noise"}
+    assert scored["tier"] in {"Tier 3: Background", "Tier 4: Low priority", "Noise / manual review"}
+
+
+def test_cam_icu_compliance_rejects_generic_icu_compliance_trials() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    restraint_trial = {
+        "title": (
+            "Stepped wedge cluster randomised controlled trial to assess the impact "
+            "of a decision support tool for physical restraint use in intensive care units"
+        ),
+        "abstract": (
+            "The trial tested a nursing management strategy for physical restraint use "
+            "in ICU patients. Physical restraints have been associated with delirium, "
+            "and the study measured compliance with the intervention."
+        ),
+        "publication_types": ["Journal Article", "Randomized Controlled Trial"],
+        "journal": "BMJ Open",
+        "pmid": "444",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/444/",
+        "citation_count": 10,
+        "citation_source": "OpenAlex",
+        "year": 2024,
+    }
+
+    scored = score_and_classify_paper(restraint_trial, context, {})
+
+    assert scored["topic_match_level"] in {"background", "noise"}
+    assert scored["tier"] in {"Tier 4: Low priority", "Noise / manual review"}
+    assert scored["reading_section"] == "Low-priority/background papers"
