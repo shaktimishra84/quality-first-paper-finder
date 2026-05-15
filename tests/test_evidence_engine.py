@@ -7,9 +7,11 @@ from paper_finder import (
     SEARCH_PURPOSE_RARE,
     SEARCH_PURPOSE_RESEARCH,
     SearchContext,
+    build_search_layers,
     classify_topic_match,
     score_and_classify_paper,
     search_purpose_config,
+    user_intent_terms,
 )
 
 
@@ -136,8 +138,99 @@ def test_same_review_ranks_higher_for_knowledge_than_research() -> None:
 
     assert knowledge["tier"] in {"Tier 1: Must-read", "Tier 2: Useful supporting"}
     assert research["tier"] == "Tier 3: Background"
-    assert knowledge["reading_section"] == "Best review articles"
+    assert knowledge["reading_section"] == "Best narrative reviews"
     assert research["reading_section"] == "Background reviews"
+
+
+def test_learning_mode_prioritizes_narrative_reviews_over_meta_analysis() -> None:
+    narrative_paper = {
+        "title": "Cerebral venous thrombosis: a narrative review",
+        "abstract": "Cerebral venous thrombosis review for broad clinical learning.",
+        "publication_types": ["Review"],
+        "journal": "Neurology Review",
+        "pmid": "111",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/111/",
+        "citation_count": 80,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    meta_paper = {
+        "title": "Cerebral venous thrombosis: a systematic review and meta-analysis",
+        "abstract": "Cerebral venous thrombosis evidence synthesis and pooled outcomes.",
+        "publication_types": ["Systematic Review", "Meta-Analysis"],
+        "journal": "Stroke",
+        "pmid": "222",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/222/",
+        "citation_count": 200,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    context = SearchContext(
+        topic="cerebral venous thrombosis",
+        search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+    )
+
+    narrative = score_and_classify_paper(narrative_paper, context, {})
+    meta = score_and_classify_paper(meta_paper, context, {})
+
+    assert narrative["purpose_fit_score"] > meta["purpose_fit_score"]
+    assert narrative["reading_section"] == "Best narrative reviews"
+    assert meta["reading_section"] == "Evidence synthesis"
+    assert meta["tier"] == "Tier 3: Background"
+
+
+def test_profile_topic_search_layers_preserve_user_intent_modifiers() -> None:
+    context = SearchContext(
+        topic="cerebral venous thrombosis anticoagulation recurrence",
+        search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+    )
+
+    layers = build_search_layers(context, candidate_depth=30)
+    intent_layer = next(layer for layer in layers if layer.name == "Intent-focused review")
+    focused_layer = next(layer for layer in layers if layer.name == "Focused")
+
+    assert user_intent_terms(context) == ["anticoagulation", "recurrence"]
+    assert "anticoagulation" in intent_layer.query
+    assert "recurrence" in intent_layer.query
+    assert "anticoagulation" in focused_layer.query
+    assert "recurrence" in focused_layer.query
+
+
+def test_requested_intent_modifiers_downrank_generic_profile_matches() -> None:
+    context = SearchContext(
+        topic="cerebral venous thrombosis anticoagulation recurrence",
+        search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+    )
+    generic = {
+        "title": "Cerebral venous thrombosis: a narrative review",
+        "abstract": "Cerebral venous thrombosis diagnosis and clinical presentation are reviewed.",
+        "publication_types": ["Review"],
+        "journal": "Stroke",
+        "pmid": "111",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/111/",
+        "citation_count": 300,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    focused = {
+        "title": "Cerebral venous thrombosis anticoagulation and recurrence: a narrative review",
+        "abstract": "Cerebral venous thrombosis anticoagulation duration and recurrence risk are reviewed.",
+        "publication_types": ["Review"],
+        "journal": "Stroke",
+        "pmid": "222",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/222/",
+        "citation_count": 80,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+
+    generic_scored = score_and_classify_paper(generic, context, {})
+    focused_scored = score_and_classify_paper(focused, context, {})
+
+    assert "Does not match requested modifiers" in "; ".join(generic_scored["penalty_notes"])
+    assert generic_scored["tier"] == "Tier 3: Background"
+    assert focused_scored["intent_match_score"] == 6
+    assert focused_scored["total_score"] > generic_scored["total_score"]
 
 
 def test_case_report_ranks_highest_for_rare_mode() -> None:

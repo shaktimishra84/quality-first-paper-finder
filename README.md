@@ -14,7 +14,7 @@ Use `https://shaktimishra84.github.io/quality-first-paper-finder/share-20260512.
 - Uses a mandatory expected-paper sanity layer for topics with known sentinel papers, starting with cerebral venous thrombosis.
 - Runs an API discovery supervisor before scoring: PubMed, Europe PMC, Crossref, OpenAlex, Semantic Scholar, Unpaywall, ClinicalTrials.gov, medRxiv/bioRxiv, and optional PubMed related-article expansion.
 - Builds a medical evidence review artifact with source IDs, evidence hierarchy, source comparison, citation verification caveats, gaps, and limitations.
-- Uses researcher-facing search modes instead of technical depth knobs: Learning mode, Research mode, Deep search mode, and Rare / case mode. Deep search and Rare / case modes keep all relevant publication types visible, including editorials, correspondence, letters, comments, case reports, and case series.
+- Uses researcher-facing search modes instead of technical depth knobs: Learning mode, Research mode, Deep search mode, and Rare / case mode. Learning mode is narrative-review first and keeps meta-analyses as secondary synthesis; Deep search and Rare / case modes keep all relevant publication types visible, including editorials, correspondence, letters, comments, case reports, and case series.
 - Admits only papers with a verifiable PMID, DOI, PubMed link, OpenAlex record, or Semantic Scholar record.
 - Enriches accepted records with OpenAlex citation counts and optional Semantic Scholar cross-checks.
 - Lets citation enrichment scale up to the retrieved candidate set while keeping it optional.

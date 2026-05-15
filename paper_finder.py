@@ -85,6 +85,49 @@ STOPWORDS = {
     "without",
 }
 
+INTENT_STOPWORDS = STOPWORDS | {
+    "about",
+    "article",
+    "articles",
+    "background",
+    "best",
+    "evidence",
+    "find",
+    "introduction",
+    "journal",
+    "landmark",
+    "learn",
+    "learning",
+    "literature",
+    "management",
+    "meta",
+    "overview",
+    "paper",
+    "papers",
+    "priority",
+    "recent",
+    "review",
+    "reviews",
+    "search",
+    "studies",
+    "study",
+    "systematic",
+    "topic",
+    "update",
+    "updates",
+}
+
+INTENT_TERM_VARIANTS = {
+    "anticoagulation": ["anticoagulant", "anticoagulants", "anticoagulated"],
+    "diagnosis": ["diagnostic", "diagnostics"],
+    "mortality": ["death", "deaths", "survival"],
+    "paediatric": ["pediatric", "children", "child"],
+    "pediatric": ["paediatric", "children", "child"],
+    "pregnancy": ["pregnant", "postpartum", "peripartum", "puerperal"],
+    "recurrence": ["recurrent", "recurrences"],
+    "ventilation": ["ventilator", "ventilatory"],
+}
+
 ICU_TERMS = [
     "icu",
     "intensive care",
@@ -217,7 +260,7 @@ SEARCH_PURPOSE_PRESETS: dict[str, dict[str, Any]] = {
         "semantic_scholar": False,
         "ai_gap_analysis": False,
         "runtime_label": "Usually fastest",
-        "description": "Best for topic understanding. Prioritises guidelines, narrative reviews, systematic reviews, and landmark trials.",
+        "description": "Best for topic understanding. Prioritises narrative reviews, landmark conceptual reviews, guidelines, and only secondary evidence synthesis.",
     },
     SEARCH_PURPOSE_RESEARCH: {
         "candidate_depth": 130,
@@ -327,6 +370,106 @@ def expected_paper_order(profile: dict[str, Any] | None) -> dict[str, int]:
         return {}
     return {item["pmid"]: index for index, item in enumerate(profile.get("expected_papers", []))}
 
+
+def profile_core_keywords(profile: dict[str, Any] | None) -> set[str]:
+    if not profile:
+        return set()
+    core_values: list[str] = []
+    for field in [
+        "display_name",
+        "key",
+        "direct_phrases",
+        "direct_synonyms",
+        "direct_acronyms",
+        "family_terms",
+    ]:
+        value = profile.get(field)
+        if isinstance(value, list):
+            core_values.extend(str(item) for item in value if item)
+        elif value:
+            core_values.append(str(value))
+    core_terms: set[str] = set()
+    for value in core_values:
+        core_terms.update(keywords(value))
+    return core_terms
+
+
+def user_intent_terms(context: SearchContext, max_terms: int = 10) -> list[str]:
+    """Return user-specific modifiers beyond the matched core topic.
+
+    Curated topic profiles intentionally broaden retrieval with synonyms and
+    MeSH-like phrases. This helper preserves the user's extra intent terms
+    (for example pregnancy, anticoagulation, recurrence, diagnosis) so a
+    profile match does not flatten a specific question into a generic topic.
+    """
+    profile = topic_profile(context.topic)
+    core_terms = profile_core_keywords(profile)
+    raw_terms: list[str] = []
+
+    if profile:
+        raw_terms.extend(
+            term for term in keywords(context.topic) if term not in core_terms
+        )
+    raw_terms.extend(keywords(context.population))
+    raw_terms.extend(keywords(context.intervention))
+    raw_terms.extend(keywords(context.comparator))
+    raw_terms.extend(keywords(context.outcome))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for term in raw_terms:
+        cleaned = normalize_space(term.lower())
+        if (
+            not cleaned
+            or cleaned in seen
+            or cleaned in INTENT_STOPWORDS
+            or cleaned in core_terms
+            or len(cleaned) < 3
+        ):
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+        if len(out) >= max_terms:
+            break
+    return out
+
+
+def intent_query_clause(terms: list[str], field: str = "Title/Abstract") -> str:
+    clauses: list[str] = []
+    for term in terms[:6]:
+        variant_clauses = [
+            clause
+            for clause in (
+                pubmed_term_clause(variant, field)
+                for variant in [term, *INTENT_TERM_VARIANTS.get(term, [])]
+            )
+            if clause
+        ]
+        if not variant_clauses:
+            continue
+        if len(variant_clauses) == 1:
+            clauses.append(variant_clauses[0])
+        else:
+            clauses.append("(" + " OR ".join(dict.fromkeys(variant_clauses)) + ")")
+    return " AND ".join(clauses)
+
+
+def intent_term_hits(terms: list[str], text: str) -> list[str]:
+    hits = []
+    for term in terms:
+        variants = [term, *INTENT_TERM_VARIANTS.get(term, [])]
+        if any(semantic_term_in_text(variant, text) for variant in variants):
+            hits.append(term)
+    return hits
+
+
+def intent_coverage(terms: list[str], text: str) -> float:
+    if not terms:
+        return 0.0
+    hits = intent_term_hits(terms, text)
+    return min(1.0, len(set(hits)) / len(set(terms)))
+
+
 MAJOR_JOURNAL_TERMS = [
     "new england journal of medicine",
     "n engl j med",
@@ -383,6 +526,25 @@ def build_search_layers(
         'OR "randomized controlled trial"[Publication Type] OR guideline[Publication Type] '
         'OR cohort OR observational OR database OR registry'
     )
+    guideline_clause = (
+        'guideline[Publication Type] OR practice guideline[Publication Type] OR '
+        '"scientific statement" OR statement OR consensus OR "society statement" OR '
+        'AHA OR ASA OR ESO OR ESICM OR SCCM OR "Neurocritical Care Society"'
+    )
+    narrative_review_clause = (
+        '(review[Publication Type] OR review OR "narrative review" OR "clinical review" OR '
+        '"practical review" OR "comprehensive review" OR "state of the art" OR '
+        '"current concepts" OR update OR seminar OR primer) NOT '
+        '("systematic review"[Publication Type] OR "meta-analysis"[Publication Type] OR '
+        '"systematic review"[Title] OR "meta-analysis"[Title] OR "meta analysis"[Title])'
+    )
+    knowledge_design_clause = (
+        f"({guideline_clause}) OR ({narrative_review_clause}) OR "
+        '"randomized controlled trial"[Publication Type]'
+    )
+    active_broad_design_clause = (
+        knowledge_design_clause if purpose == SEARCH_PURPOSE_KNOWLEDGE else broad_design_clause
+    )
     inclusive_publication_clause = (
         '"case reports"[Publication Type] OR "case report" OR "case series" OR '
         'letter[Publication Type] OR letter OR correspondence OR '
@@ -390,8 +552,12 @@ def build_search_layers(
         'editorial[Publication Type] OR editorial OR reply OR '
         'opinion OR perspective'
     )
+    intent_terms = user_intent_terms(context)
+    intent_clause = intent_query_clause(intent_terms)
 
     pico_terms = [topic_query]
+    if intent_clause:
+        pico_terms.append(intent_clause)
     pico_terms.extend(
         part.strip()
         for part in [
@@ -409,8 +575,8 @@ def build_search_layers(
         "Diagnosis": '"diagnostic accuracy" OR sensitivity OR specificity OR diagnosis',
         "Prognosis or prediction": 'prognosis OR prediction OR cohort OR "risk model"',
         "Implementation or cost": 'implementation OR feasibility OR cost OR audit OR protocol',
-        "General evidence map": broad_design_clause,
-    }.get(context.question_type, broad_design_clause)
+        "General evidence map": active_broad_design_clause,
+    }.get(context.question_type, active_broad_design_clause)
 
     gap_clause = (
         'India OR Indian OR LMIC OR "resource limited" OR "low income" '
@@ -418,22 +584,34 @@ def build_search_layers(
         'OR subgroup OR "trial protocol" OR uncertainty OR "research gap"'
     )
     review_guideline_clause = (
-        'guideline[Publication Type] OR practice guideline[Publication Type] OR '
-        '"scientific statement" OR statement OR consensus OR "society statement" OR '
-        'AHA OR ASA OR ESO OR ESICM OR SCCM OR "Neurocritical Care Society" OR '
-        'review[Publication Type] OR "systematic review"[Publication Type] OR '
-        '"meta-analysis"[Publication Type] OR review OR "practical review" OR '
-        '"comprehensive review" OR "state of the art" OR update OR seminar OR primer OR '
-        '"clinical review"'
+        f"({guideline_clause}) OR ({narrative_review_clause})"
+        if purpose == SEARCH_PURPOSE_KNOWLEDGE
+        else (
+            f"({guideline_clause}) OR "
+            'review[Publication Type] OR "systematic review"[Publication Type] OR '
+            '"meta-analysis"[Publication Type] OR review OR "practical review" OR '
+            '"comprehensive review" OR "state of the art" OR update OR seminar OR primer OR '
+            '"clinical review"'
+        )
     )
     landmark_clause = (
-        'landmark OR classic OR "highly cited" OR "current concepts" OR '
-        'review[Publication Type] OR "New England Journal of Medicine" OR Lancet OR JAMA OR BMJ OR Stroke'
+        (
+            'landmark OR classic OR "highly cited" OR "current concepts" OR '
+            f"({narrative_review_clause}) OR "
+            '"New England Journal of Medicine" OR Lancet OR JAMA OR BMJ OR Stroke'
+        )
+        if purpose == SEARCH_PURPOSE_KNOWLEDGE
+        else (
+            'landmark OR classic OR "highly cited" OR "current concepts" OR '
+            'review[Publication Type] OR "New England Journal of Medicine" OR Lancet OR JAMA OR BMJ OR Stroke'
+        )
     )
-    recent_update_clause = (
-        f'("{recent_start_year}"[dp] : "3000"[dp]) AND '
-        '(review OR update OR guideline OR statement OR consensus OR trial OR cohort)'
+    recent_update_body = (
+        f"(({guideline_clause}) OR ({narrative_review_clause}))"
+        if purpose == SEARCH_PURPOSE_KNOWLEDGE
+        else '(review OR update OR guideline OR statement OR consensus OR trial OR cohort)'
     )
+    recent_update_clause = f'("{recent_start_year}"[dp] : "3000"[dp]) AND {recent_update_body}'
     if purpose == SEARCH_PURPOSE_KNOWLEDGE:
         broad_retmax = max(candidate_depth // 2, 50)
         review_retmax = max(candidate_depth, 80)
@@ -459,7 +637,7 @@ def build_search_layers(
         SearchLayer(
             name="Broad",
             purpose="Capture the field without ICU-only narrowing before scoring.",
-            query=f"({topic_query}) AND ({broad_design_clause})",
+            query=f"({topic_query}) AND ({active_broad_design_clause})",
             retmax=broad_retmax,
         ),
         SearchLayer(
@@ -493,6 +671,19 @@ def build_search_layers(
             retmax=gap_retmax,
         ),
     ]
+    if intent_clause:
+        layers.insert(
+            2,
+            SearchLayer(
+                name="Intent-focused review" if purpose == SEARCH_PURPOSE_KNOWLEDGE else "Intent-focused",
+                purpose="Preserve the user's specific modifiers instead of falling back to a generic topic profile.",
+                query=(
+                    f"({topic_query}) AND ({intent_clause}) AND "
+                    f"({review_guideline_clause if purpose == SEARCH_PURPOSE_KNOWLEDGE else question_type_terms})"
+                ),
+                retmax=max(focused_retmax, 40),
+            ),
+        )
     semantic_terms = semantic_topic_terms(topic, topic_profile(topic) or {})
     component_terms = unique_component_axis_terms(semantic_terms.get("component", []))[:4]
     synonym_terms = semantic_terms.get("synonym", [])[:8]
@@ -509,7 +700,7 @@ def build_search_layers(
                 SearchLayer(
                     name="Semantic component fallback",
                     purpose="Fallback layer for papers covering all component concepts when the exact phrase is too narrow.",
-                    query=f"({component_query}) AND ({broad_design_clause})",
+                    query=f"({component_query}) AND ({active_broad_design_clause})",
                     retmax=max(40, candidate_depth // 2),
                 ),
             )
@@ -523,7 +714,7 @@ def build_search_layers(
             SearchLayer(
                 name="Synonym-expanded concept",
                 purpose="Fallback layer using disease aliases, abbreviations, MeSH-style terms, and clinically equivalent language.",
-                query=f"({' OR '.join(synonym_clauses)}) AND ({broad_design_clause})",
+                query=f"({' OR '.join(synonym_clauses)}) AND ({active_broad_design_clause})",
                 retmax=max(40, candidate_depth // 2),
             ),
         )
@@ -921,6 +1112,7 @@ def run_api_discovery_supervisor(
     sources: list[dict[str, Any]] = []
     errors: list[str] = []
     warnings: list[str] = []
+    purpose = normalized_search_purpose(context.search_purpose)
 
     def add_pmids(found_pmids: list[str], layer: str, query: str, reason: str) -> None:
         clean_pmids = []
@@ -1028,21 +1220,26 @@ def run_api_discovery_supervisor(
     else:
         warnings.append("API supervisor - Unpaywall skipped: configure an email in app secrets to use the Unpaywall API.")
 
-    for layer_name, query, page_size, reason in api_supervisor_clinicaltrials_queries(context, per_query_limit):
-        try:
-            records = search_clinicaltrials_records(query, page_size=page_size)
-            add_clinical_trial_records(records, layer_name, query, reason)
-        except requests.RequestException as exc:
-            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+    if purpose != SEARCH_PURPOSE_KNOWLEDGE:
+        for layer_name, query, page_size, reason in api_supervisor_clinicaltrials_queries(context, per_query_limit):
+            try:
+                records = search_clinicaltrials_records(query, page_size=page_size)
+                add_clinical_trial_records(records, layer_name, query, reason)
+            except requests.RequestException as exc:
+                errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
 
-    for layer_name, server, interval, cursor, reason in api_supervisor_preprint_queries(context):
-        try:
-            found = search_biorxiv_medrxiv_dois(context, server=server, interval=interval, cursor=cursor)
-            add_dois(found, layer_name, f"{server}/{interval}/{cursor}", reason)
-        except requests.RequestException as exc:
-            errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+        for layer_name, server, interval, cursor, reason in api_supervisor_preprint_queries(context):
+            try:
+                found = search_biorxiv_medrxiv_dois(context, server=server, interval=interval, cursor=cursor)
+                add_dois(found, layer_name, f"{server}/{interval}/{cursor}", reason)
+            except requests.RequestException as exc:
+                errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
+    else:
+        warnings.append(
+            "API supervisor - trial registry and preprint sweeps skipped in learning mode to keep the reading pack review-first."
+        )
 
-    related_seed_pmids = pmids[:3]
+    related_seed_pmids = [] if purpose == SEARCH_PURPOSE_KNOWLEDGE else pmids[:3]
     related_pmids: list[str] = []
     if related_seed_pmids:
         try:
@@ -1078,13 +1275,21 @@ def api_supervisor_pubmed_queries(
     context: SearchContext,
     per_query_limit: int,
 ) -> list[tuple[str, str, int, str]]:
+    purpose = normalized_search_purpose(context.search_purpose)
     phrase = normalize_space(context.topic)
     quoted_phrase = pubmed_quote(phrase)
     concept_query = api_supervisor_concept_query(context, field="Title/Abstract")
     recent_start_year = max(1900, context.current_year - 2)
     review_terms = (
-        'review[Publication Type] OR review OR "clinical review" OR '
-        '"comprehensive review" OR "state of the art" OR update OR primer OR seminar'
+        '(review[Publication Type] OR review OR "narrative review" OR "clinical review" OR '
+        '"comprehensive review" OR "state of the art" OR "practical review" OR update OR primer OR seminar) '
+        'NOT ("systematic review"[Publication Type] OR "meta-analysis"[Publication Type] OR '
+        '"systematic review"[Title] OR "meta-analysis"[Title] OR "meta analysis"[Title])'
+        if purpose == SEARCH_PURPOSE_KNOWLEDGE
+        else (
+            'review[Publication Type] OR review OR "clinical review" OR '
+            '"comprehensive review" OR "state of the art" OR update OR primer OR seminar'
+        )
     )
     queries: list[tuple[str, str, int, str]] = []
     if quoted_phrase:
@@ -1108,9 +1313,17 @@ def api_supervisor_pubmed_queries(
         queries.append(
             (
                 "API supervisor - PubMed recent focused",
-                f"({concept_query}) AND (\"{recent_start_year}\"[dp] : \"3000\"[dp])",
+                (
+                    f"({concept_query}) AND (\"{recent_start_year}\"[dp] : \"3000\"[dp]) AND ({review_terms})"
+                    if purpose == SEARCH_PURPOSE_KNOWLEDGE
+                    else f"({concept_query}) AND (\"{recent_start_year}\"[dp] : \"3000\"[dp])"
+                ),
                 per_query_limit,
-                "Recent focused-topic search from topic concepts",
+                (
+                    "Recent narrative-review search from topic concepts"
+                    if purpose == SEARCH_PURPOSE_KNOWLEDGE
+                    else "Recent focused-topic search from topic concepts"
+                ),
             )
         )
     return queries
@@ -1120,6 +1333,7 @@ def api_supervisor_europe_pmc_queries(
     context: SearchContext,
     per_query_limit: int,
 ) -> list[tuple[str, str, int, str]]:
+    purpose = normalized_search_purpose(context.search_purpose)
     phrase = normalize_space(context.topic)
     keyword_query = " ".join(api_supervisor_keywords(context)[:8])
     queries: list[tuple[str, str, int, str]] = []
@@ -1136,9 +1350,17 @@ def api_supervisor_europe_pmc_queries(
         queries.append(
             (
                 "API supervisor - Europe PMC recent review",
-                f"{keyword_query} review sort_date:y",
+                (
+                    f'{keyword_query} ("narrative review" OR "clinical review" OR "state of the art" OR "practical review") sort_date:y'
+                    if purpose == SEARCH_PURPOSE_KNOWLEDGE
+                    else f"{keyword_query} review sort_date:y"
+                ),
                 per_query_limit,
-                "Europe PMC recent review search",
+                (
+                    "Europe PMC recent narrative-review search"
+                    if purpose == SEARCH_PURPOSE_KNOWLEDGE
+                    else "Europe PMC recent review search"
+                ),
             )
         )
     return queries
@@ -1324,11 +1546,14 @@ def api_supervisor_keywords(context: SearchContext) -> list[str]:
     if profile:
         raw_terms.extend(str(term) for term in profile.get("query_expansion_terms", [])[:6])
         raw_terms.extend(str(term) for term in profile.get("must_include_concepts", [])[:6])
+    raw_terms.extend(user_intent_terms(context))
     raw_terms.extend(keywords(topic))
     raw_terms.extend(keywords(context.population))
+    raw_terms.extend(keywords(context.intervention))
+    raw_terms.extend(keywords(context.comparator))
     raw_terms.extend(keywords(context.outcome))
 
-    weak_terms = {
+    weak_terms = INTENT_STOPWORDS | {
         "effect",
         "effects",
         "impact",
@@ -2410,6 +2635,19 @@ def apply_topic_penalties(
         penalty_total -= 6
         penalty_notes.append("Animal/basic science de-emphasized for clinical search (-6)")
 
+    requested_terms = user_intent_terms(context)
+    if requested_terms:
+        matched_terms = intent_term_hits(requested_terms, text)
+        match_ratio = min(1.0, len(set(matched_terms)) / len(set(requested_terms)))
+        if match_ratio == 0:
+            penalty = -12 if purpose in {SEARCH_PURPOSE_KNOWLEDGE, SEARCH_PURPOSE_RESEARCH} else -6
+            penalty_total += penalty
+            penalty_notes.append(f"Does not match requested modifiers ({penalty:+d})")
+        elif match_ratio < 0.34:
+            penalty = -5 if purpose in {SEARCH_PURPOSE_KNOWLEDGE, SEARCH_PURPOSE_RESEARCH} else -2
+            penalty_total += penalty
+            penalty_notes.append(f"Weak match to requested modifiers ({penalty:+d})")
+
     if not (paper.get("abstract") or "").strip():
         metadata_poor = (
             paper.get("quartile") == "quartile not verified"
@@ -2435,6 +2673,23 @@ def must_include_boost(paper: dict[str, Any], context: SearchContext) -> tuple[i
         return 0, []
     bonus = min(6, len(matched) * 2)
     return bonus, matched
+
+
+def score_user_intent_match(
+    paper: dict[str, Any],
+    context: SearchContext,
+) -> tuple[int, str, list[str], list[str]]:
+    terms = user_intent_terms(context)
+    if not terms:
+        return 0, "", [], []
+    text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+    hits = intent_term_hits(terms, text)
+    ratio = min(1.0, len(set(hits)) / len(set(terms)))
+    if ratio >= 0.67:
+        return 6, "strong match to requested modifiers: " + ", ".join(hits), hits, terms
+    if ratio >= 0.34:
+        return 3, "partial match to requested modifiers: " + ", ".join(hits), hits, terms
+    return 0, "does not mention requested modifiers: " + ", ".join(terms), hits, terms
 
 
 def ranking_confidence_for(paper: dict[str, Any]) -> str:
@@ -2483,6 +2738,9 @@ def reason_for_tier(paper: dict[str, Any]) -> str:
 
     if paper.get("purpose_fit_reason"):
         bits.append(f"goal fit: {paper['purpose_fit_reason']}")
+
+    if paper.get("intent_match_reason"):
+        bits.append(f"intent fit: {paper['intent_match_reason']}")
 
     penalty_notes = paper.get("penalty_notes", [])
     if penalty_notes:
@@ -2533,6 +2791,9 @@ def score_and_classify_paper(
     )
     recency_score = score_recency(paper.get("year"), context.current_year, paper, design)
     purpose_score, purpose_reason = search_purpose_adjustment(paper, design, context)
+    intent_score, intent_reason, intent_hits, requested_intent_terms = score_user_intent_match(
+        paper, context
+    )
 
     concept_bonus, matched_concepts = must_include_boost(paper, context)
     if concept_bonus:
@@ -2550,6 +2811,7 @@ def score_and_classify_paper(
         + citation_score
         + recency_score
         + purpose_score
+        + intent_score
     )
     final_score_raw = base_total + penalty_score
     total_score = min(100, max(0, final_score_raw))
@@ -2570,6 +2832,10 @@ def score_and_classify_paper(
     paper["recency_score"] = recency_score
     paper["purpose_fit_score"] = purpose_score
     paper["purpose_fit_reason"] = purpose_reason
+    paper["intent_match_score"] = intent_score
+    paper["intent_match_reason"] = intent_reason
+    paper["intent_terms"] = ", ".join(requested_intent_terms)
+    paper["intent_hits"] = ", ".join(intent_hits)
     paper["search_mode"] = normalized_search_purpose(context.search_purpose)
     paper["search_purpose"] = paper["search_mode"]
     paper["penalty_score"] = penalty_score
@@ -3472,31 +3738,30 @@ def search_purpose_adjustment(
     practical_update = recent and has_any(title, ["review", "update", "practical", "state of the art"])
 
     if purpose == SEARCH_PURPOSE_KNOWLEDGE:
-        if design in {
-            "Guideline / consensus / society statement",
-            "Systematic review / meta-analysis",
-            "Narrative review",
-        }:
-            score += 20
-            reasons.append("learning mode prioritizes reviews, guidelines, and consensus papers")
-        elif design == "Landmark physiological review":
-            score += 18
+        if design in {"Narrative review", "Landmark physiological review"}:
+            score += 22
             reasons.append("learning mode prioritizes landmark conceptual reviews")
+        elif design == "Guideline / consensus / society statement":
+            score += 16
+            reasons.append("learning mode keeps guidelines after narrative reviews")
+        elif design == "Systematic review / meta-analysis":
+            score += 4
+            reasons.append("learning mode treats meta-analysis as secondary synthesis, not first-line reading")
         elif practical_update:
-            score += 12
+            score += 14
             reasons.append("recent practical review/update")
         elif design in {"Landmark randomized trial", "Randomized controlled trial"}:
-            score += 8
+            score += 6
             reasons.append("learning mode keeps major trials after review sources")
         elif design in {
             "Large multicentre prospective cohort",
             "Large retrospective / database study",
             "Diagnostic accuracy study",
         }:
-            score += 5
+            score += 2
             reasons.append("learning mode keeps important original evidence after reviews")
         elif design == "Editorial / correspondence / commentary":
-            score += 3
+            score += 1
             reasons.append("learning mode keeps useful expert viewpoints")
         if design == "Case series / case report":
             score -= 3
@@ -3679,13 +3944,14 @@ def assign_mode_tier(paper: dict[str, Any], context: SearchContext) -> str:
         if strong_direct and (
             design in {
                 "Guideline / consensus / society statement",
-                "Systematic review / meta-analysis",
                 "Narrative review",
                 "Landmark physiological review",
             }
             or major_review
         ) and total >= 55:
             return "Tier 1: Must-read"
+        if strong_direct and design == "Systematic review / meta-analysis" and total >= 55:
+            return "Tier 2: Useful supporting"
         if strong_direct and design in {
             "Landmark randomized trial",
             "Randomized controlled trial",
@@ -3829,6 +4095,14 @@ def mode_specific_tier_cap(paper: dict[str, Any], context: SearchContext) -> tup
     design = paper.get("study_design", "")
     text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
     rare_signal = has_any(text, RARE_CASE_TERMS)
+    requested_terms = user_intent_terms(context)
+
+    if (
+        requested_terms
+        and purpose in {SEARCH_PURPOSE_KNOWLEDGE, SEARCH_PURPOSE_RESEARCH}
+        and not intent_term_hits(requested_terms, text)
+    ):
+        return 3, "requested modifiers are absent, so this is kept only as background"
 
     if purpose == SEARCH_PURPOSE_RESEARCH and design in {
         "Narrative review",
@@ -3856,6 +4130,12 @@ def mode_specific_tier_cap(paper: dict[str, Any], context: SearchContext) -> tup
         "Molecular / mechanistic study",
     } and not paper.get("expected_paper_reason"):
         return 3, "knowledge mode keeps narrow low-level evidence as background"
+
+    if (
+        purpose == SEARCH_PURPOSE_KNOWLEDGE
+        and design == "Systematic review / meta-analysis"
+    ):
+        return 3, "knowledge mode caps meta-analyses at background; narrative reviews are prioritized for learning"
 
     if purpose == SEARCH_PURPOSE_RARE and design in {
         "Guideline / consensus / society statement",
@@ -3908,14 +4188,12 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
     recent = bool(paper.get("year") and context.current_year - paper["year"] <= 3)
 
     if purpose == SEARCH_PURPOSE_KNOWLEDGE:
-        if design == "Landmark physiological review":
-            return "Foundational concepts"
-        if design == "Narrative review" or (
-            design == "Systematic review / meta-analysis" and tier_order <= 2
-        ):
-            return "Best review articles"
+        if design in {"Narrative review", "Landmark physiological review"}:
+            return "Best narrative reviews"
         if design == "Guideline / consensus / society statement":
             return "Guidelines and consensus"
+        if design == "Systematic review / meta-analysis":
+            return "Evidence synthesis"
         if design in {"Experimental / animal / basic science", "Molecular / mechanistic study"}:
             return "Foundational concepts"
         if design in {"Landmark randomized trial", "Randomized controlled trial"} and tier_order <= 2:
@@ -4003,10 +4281,11 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
 def reading_section_order(search_mode: str) -> dict[str, int]:
     sections = {
         SEARCH_PURPOSE_KNOWLEDGE: [
-            "Best review articles",
+            "Best narrative reviews",
             "Guidelines and consensus",
             "Foundational concepts",
             "Landmark clinical papers",
+            "Evidence synthesis",
             "Recent updates",
             "Background papers",
         ],
@@ -4164,6 +4443,8 @@ def why_included(paper: dict[str, Any]) -> str:
         reasons.append(paper["recent_high_quality_note"])
     if paper.get("purpose_fit_reason"):
         reasons.append(paper["purpose_fit_reason"])
+    if paper.get("intent_match_reason"):
+        reasons.append(paper["intent_match_reason"])
     if paper.get("penalty_notes"):
         reasons.append("penalties: " + "; ".join(paper["penalty_notes"]))
     if paper.get("tier_cap_reason"):

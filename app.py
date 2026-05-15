@@ -46,141 +46,141 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-	    :root {
-	        --qf-blue:    #2563EB;
-	        --qf-cyan:    #0891B2;
-	        --qf-red:     #DC2626;
-	        --qf-amber:   #B45309;
-	        --qf-green:   #047857;
-	        --qf-violet:  #7C3AED;
-	        --qf-tier-1:  #A16207;
-	        --qf-tier-2:  #2563EB;
-	        --qf-tier-3:  #475569;
-	        --qf-tier-4:  #64748B;
-	        --qf-noise:   #B91C1C;
-	        --qf-muted:   #64748B;
-	        --qf-bg: #FFFFFF;
-	        --qf-bg-soft: #F8FAFC;
-	        --qf-bg-muted: #F1F5F9;
-	        --qf-text: #111827;
-	        --qf-text-soft: #334155;
-	        --qf-surface-border: #DDE5EE;
-	        --qf-soft-border: #CBD5E1;
-	        --qf-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
-	    }
+    :root {
+        --qf-blue:    #2563EB;
+        --qf-cyan:    #0891B2;
+        --qf-red:     #DC2626;
+        --qf-amber:   #B45309;
+        --qf-green:   #047857;
+        --qf-violet:  #7C3AED;
+        --qf-tier-1:  #A16207;
+        --qf-tier-2:  #2563EB;
+        --qf-tier-3:  #475569;
+        --qf-tier-4:  #64748B;
+        --qf-noise:   #B91C1C;
+        --qf-muted:   #64748B;
+        --qf-bg: #FFFFFF;
+        --qf-bg-soft: #F8FAFC;
+        --qf-bg-muted: #F1F5F9;
+        --qf-text: #111827;
+        --qf-text-soft: #334155;
+        --qf-surface-border: #DDE5EE;
+        --qf-soft-border: #CBD5E1;
+        --qf-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+    }
 
-	    html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea {
-	        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	        font-feature-settings: "tnum" 1;
-	        color: var(--qf-text);
-	    }
-	    [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
-	        background: var(--qf-bg) !important;
-	    }
-	    [data-testid="stHeader"], [data-testid="stToolbar"] {
-	        background: rgba(255, 255, 255, 0.94) !important;
-	    }
-	    [data-testid="stSidebar"] {
-	        background: var(--qf-bg-soft) !important;
-	    }
-	    textarea, input, [data-baseweb="select"] > div {
-	        background-color: var(--qf-bg) !important;
-	        color: var(--qf-text) !important;
-	        border-color: var(--qf-surface-border) !important;
-	    }
-	    label, [data-testid="stWidgetLabel"] {
-	        color: var(--qf-text) !important;
-	        font-weight: 600;
-	    }
-	    p, li, span, div {
-	        letter-spacing: 0;
-	    }
-	    [data-testid="stDataFrame"] {
-	        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	        font-feature-settings: "tnum" 1;
-	    }
-	    [data-testid="stMetricValue"], code {
-	        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
-	        font-variant-numeric: tabular-nums;
-	    }
+    html, body, [data-testid="stAppViewContainer"], .stMarkdown, .stTextInput, .stTextArea {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-feature-settings: "tnum" 1;
+        color: var(--qf-text);
+    }
+    [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
+        background: var(--qf-bg) !important;
+    }
+    [data-testid="stHeader"], [data-testid="stToolbar"] {
+        background: rgba(255, 255, 255, 0.94) !important;
+    }
+    [data-testid="stSidebar"] {
+        background: var(--qf-bg-soft) !important;
+    }
+    textarea, input, [data-baseweb="select"] > div {
+        background-color: var(--qf-bg) !important;
+        color: var(--qf-text) !important;
+        border-color: var(--qf-surface-border) !important;
+    }
+    label, [data-testid="stWidgetLabel"] {
+        color: var(--qf-text) !important;
+        font-weight: 600;
+    }
+    p, li, span, div {
+        letter-spacing: 0;
+    }
+    [data-testid="stDataFrame"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-feature-settings: "tnum" 1;
+    }
+    [data-testid="stMetricValue"], code {
+        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+    }
 
-	    .main .block-container {
-	        padding-top: 1.25rem;
-	        max-width: 1600px;
-	    }
-	    h1 { font-size: 2.1rem; font-weight: 700; letter-spacing: 0; }
-	    h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: 0; }
-	    h3 { font-size: 1.1rem; font-weight: 600; }
-	    h4 { font-size: 1rem; font-weight: 600; }
+    .main .block-container {
+        padding-top: 1.25rem;
+        max-width: 1600px;
+    }
+    h1 { font-size: 2.1rem; font-weight: 700; letter-spacing: 0; }
+    h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: 0; }
+    h3 { font-size: 1.1rem; font-weight: 600; }
+    h4 { font-size: 1rem; font-weight: 600; }
 
-	    [data-testid="stMetric"] {
-	        background: var(--qf-bg);
-	        border: 1px solid var(--qf-surface-border);
-	        border-radius: 8px;
-	        padding: 0.65rem 0.85rem;
-	        color: var(--qf-text);
-	        box-shadow: var(--qf-shadow);
-	        transition: border-color 180ms ease;
-	    }
-	    [data-testid="stMetric"]:hover { border-color: var(--qf-soft-border); }
-	    [data-testid="stMetricLabel"] { font-size: 0.74rem; opacity: 0.72; letter-spacing: 0; }
-	    [data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 500; }
-	    [data-testid="stMetricDelta"] svg { display: none; }
+    [data-testid="stMetric"] {
+        background: var(--qf-bg);
+        border: 1px solid var(--qf-surface-border);
+        border-radius: 8px;
+        padding: 0.65rem 0.85rem;
+        color: var(--qf-text);
+        box-shadow: var(--qf-shadow);
+        transition: border-color 180ms ease;
+    }
+    [data-testid="stMetric"]:hover { border-color: var(--qf-soft-border); }
+    [data-testid="stMetricLabel"] { font-size: 0.74rem; opacity: 0.72; letter-spacing: 0; }
+    [data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 500; }
+    [data-testid="stMetricDelta"] svg { display: none; }
 
-	    .qf-app-header {
-	        border-bottom: 1px solid var(--qf-surface-border);
-	        padding: 0.35rem 0 1rem 0;
-	        margin-bottom: 0.7rem;
-	    }
-	    .qf-app-kicker {
-	        color: var(--qf-cyan);
-	        font-size: 0.78rem;
-	        font-weight: 600;
-	        letter-spacing: 0;
-	        margin-bottom: 0.15rem;
-	    }
-	    .qf-app-title {
-	        font-size: 2.05rem;
-	        font-weight: 700;
-	        line-height: 1.16;
-	        letter-spacing: 0;
-	        margin: 0;
-	        color: var(--qf-text);
-	    }
-	    .qf-app-subtitle {
-	        max-width: 860px;
-	        color: var(--qf-muted);
-	        font-size: 0.96rem;
-	        line-height: 1.55;
-	        margin-top: 0.35rem;
-	    }
-	    .qf-mode-caption {
-	        color: var(--qf-text-soft);
-	        font-size: 0.84rem;
-	        line-height: 1.42;
-	        margin-top: 0.35rem;
-	    }
-	    .qf-results-header {
-	        border-top: 1px solid var(--qf-surface-border);
-	        border-bottom: 1px solid var(--qf-surface-border);
-	        padding: 0.95rem 0;
-	        margin: 0.8rem 0 0.75rem 0;
-	    }
-	    .qf-results-title {
-	        font-size: 1.22rem;
-	        font-weight: 700;
-	        line-height: 1.35;
-	        margin-bottom: 0.25rem;
-	        color: var(--qf-text);
-	    }
-	    .qf-results-meta {
-	        color: var(--qf-muted);
-	        font-size: 0.9rem;
-	        line-height: 1.45;
-	    }
+    .qf-app-header {
+        border-bottom: 1px solid var(--qf-surface-border);
+        padding: 0.35rem 0 1rem 0;
+        margin-bottom: 0.7rem;
+    }
+    .qf-app-kicker {
+        color: var(--qf-cyan);
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0;
+        margin-bottom: 0.15rem;
+    }
+    .qf-app-title {
+        font-size: 2.05rem;
+        font-weight: 700;
+        line-height: 1.16;
+        letter-spacing: 0;
+        margin: 0;
+        color: var(--qf-text);
+    }
+    .qf-app-subtitle {
+        max-width: 860px;
+        color: var(--qf-muted);
+        font-size: 0.96rem;
+        line-height: 1.55;
+        margin-top: 0.35rem;
+    }
+    .qf-mode-caption {
+        color: var(--qf-text-soft);
+        font-size: 0.84rem;
+        line-height: 1.42;
+        margin-top: 0.35rem;
+    }
+    .qf-results-header {
+        border-top: 1px solid var(--qf-surface-border);
+        border-bottom: 1px solid var(--qf-surface-border);
+        padding: 0.95rem 0;
+        margin: 0.8rem 0 0.75rem 0;
+    }
+    .qf-results-title {
+        font-size: 1.22rem;
+        font-weight: 700;
+        line-height: 1.35;
+        margin-bottom: 0.25rem;
+        color: var(--qf-text);
+    }
+    .qf-results-meta {
+        color: var(--qf-muted);
+        font-size: 0.9rem;
+        line-height: 1.45;
+    }
 
-	    .qf-rule {
-	        border-left: 4px solid var(--qf-blue);
+    .qf-rule {
+        border-left: 4px solid var(--qf-blue);
         padding: 0.35rem 0 0.35rem 0.75rem;
         color: var(--qf-text);
         font-size: 0.92rem;
@@ -189,37 +189,37 @@ st.markdown(
         border-left: 4px solid var(--qf-red);
         padding: 0.35rem 0 0.35rem 0.75rem;
     }
-	    .qf-chip {
-	        display: inline-block;
-	        padding: 0.18rem 0.52rem;
-	        border-radius: 999px;
-	        font-size: 0.74rem;
-	        font-weight: 600;
-	        margin-right: 0.4rem;
-	        margin-bottom: 0.25rem;
-	        border: 1px solid currentColor;
-	        background: #FFFFFF;
-	        line-height: 1.4;
-	        transition: background-color 150ms ease;
-	    }
-	    .qf-chip-blue   { color: var(--qf-blue); }
-	    .qf-chip-amber  { color: var(--qf-amber); }
-	    .qf-chip-green  { color: var(--qf-green); }
-	    .qf-chip-violet { color: var(--qf-violet); }
-	    .qf-chip-muted  { color: var(--qf-muted); }
+    .qf-chip {
+        display: inline-block;
+        padding: 0.18rem 0.52rem;
+        border-radius: 999px;
+        font-size: 0.74rem;
+        font-weight: 600;
+        margin-right: 0.4rem;
+        margin-bottom: 0.25rem;
+        border: 1px solid currentColor;
+        background: #FFFFFF;
+        line-height: 1.4;
+        transition: background-color 150ms ease;
+    }
+    .qf-chip-blue   { color: var(--qf-blue); }
+    .qf-chip-amber  { color: var(--qf-amber); }
+    .qf-chip-green  { color: var(--qf-green); }
+    .qf-chip-violet { color: var(--qf-violet); }
+    .qf-chip-muted  { color: var(--qf-muted); }
     .qf-chip-tier-1 { color: var(--qf-tier-1); background: #FEF9C3; }
     .qf-chip-tier-2 { color: var(--qf-tier-2); background: #EFF6FF; }
     .qf-chip-tier-3 { color: var(--qf-tier-3); }
     .qf-chip-tier-4 { color: var(--qf-tier-4); }
     .qf-chip-noise  { color: var(--qf-noise); background: rgba(248, 113, 113, 0.08); }
 
-	    .qf-section-caption {
-	        font-size: 0.72rem;
-	        text-transform: uppercase;
-	        letter-spacing: 0;
-	        opacity: 0.6;
-	        margin: 0.35rem 0 0.4rem 0;
-	        font-weight: 500;
+    .qf-section-caption {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0;
+        opacity: 0.6;
+        margin: 0.35rem 0 0.4rem 0;
+        font-weight: 500;
     }
     .qf-detail {
         background: var(--qf-bg);
@@ -229,103 +229,113 @@ st.markdown(
         margin-top: 0.5rem;
         box-shadow: var(--qf-shadow);
     }
-	    .qf-detail h4 { margin-top: 0; margin-bottom: 0.6rem; line-height: 1.35; }
+    .qf-detail h4 { margin-top: 0; margin-bottom: 0.6rem; line-height: 1.35; }
 
-	    .qf-section-grid {
-	        display: grid;
-	        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-	        gap: 0.55rem;
-	        margin: 0.4rem 0 1rem 0;
-	    }
-	    .qf-section-tile {
-	        border: 1px solid var(--qf-surface-border);
-	        border-radius: 8px;
-	        padding: 0.72rem 0.8rem;
-	        background: var(--qf-bg);
-	        box-shadow: var(--qf-shadow);
-	    }
-	    .qf-section-tile-title {
-	        font-size: 0.86rem;
-	        font-weight: 600;
-	        line-height: 1.25;
-	        margin-bottom: 0.35rem;
-	    }
-	    .qf-section-tile-meta {
-	        color: var(--qf-muted);
-	        font-size: 0.78rem;
-	    }
-	    .qf-paper-card {
-	        border: 1px solid var(--qf-surface-border);
-	        border-radius: 8px;
-	        padding: 0.85rem 0.95rem;
-	        margin-bottom: 0.65rem;
-	        background: var(--qf-bg);
-	        box-shadow: var(--qf-shadow);
-	    }
-	    .qf-paper-card:hover {
-	        border-color: var(--qf-soft-border);
-	    }
-	    .qf-card-title {
-	        font-size: 0.98rem;
-	        font-weight: 700;
-	        line-height: 1.35;
-	        margin-bottom: 0.25rem;
-	        color: var(--qf-text);
-	    }
-	    .qf-paper-meta {
-	        color: var(--qf-muted);
-	        font-size: 0.82rem;
-	        line-height: 1.4;
-	        margin-bottom: 0.45rem;
-	    }
-	    .qf-paper-why {
-	        color: var(--qf-text-soft);
-	        font-size: 0.86rem;
-	        line-height: 1.45;
-	        margin-top: 0.35rem;
-	    }
-	    .qf-paper-rank {
-	        color: var(--qf-cyan);
-	        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
-	        font-size: 0.78rem;
-	        font-weight: 600;
-	        margin-bottom: 0.25rem;
-	    }
-	    .qf-empty-state {
-	        border: 1px solid var(--qf-surface-border);
-	        border-radius: 8px;
-	        padding: 1rem 1.1rem;
-	        background: var(--qf-bg);
-	        box-shadow: var(--qf-shadow);
-	    }
-	    .qf-empty-title {
-	        font-size: 1rem;
-	        font-weight: 650;
-	        margin-bottom: 0.35rem;
-	    }
-	    .qf-empty-body {
-	        color: var(--qf-muted);
-	        font-size: 0.92rem;
-	        line-height: 1.5;
-	    }
-	    [data-testid="stDataFrame"] {
-	        border: 1px solid var(--qf-surface-border);
-	        border-radius: 8px;
-	        overflow: hidden;
-	        box-shadow: var(--qf-shadow);
-	    }
-	    [data-testid="stExpander"] {
-	        border-color: var(--qf-surface-border);
-	        border-radius: 8px;
-	    }
+    .qf-section-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.55rem;
+        margin: 0.4rem 0 1rem 0;
+    }
+    .qf-section-tile {
+        border: 1px solid var(--qf-surface-border);
+        border-radius: 8px;
+        padding: 0.72rem 0.8rem;
+        background: var(--qf-bg);
+        box-shadow: var(--qf-shadow);
+    }
+    .qf-section-tile-title {
+        font-size: 0.86rem;
+        font-weight: 600;
+        line-height: 1.25;
+        margin-bottom: 0.35rem;
+    }
+    .qf-section-tile-meta {
+        color: var(--qf-muted);
+        font-size: 0.78rem;
+    }
+    .qf-paper-card {
+        border: 1px solid var(--qf-surface-border);
+        border-radius: 8px;
+        padding: 0.85rem 0.95rem;
+        margin-bottom: 0.65rem;
+        background: var(--qf-bg);
+        box-shadow: var(--qf-shadow);
+    }
+    .qf-paper-card:hover {
+        border-color: var(--qf-soft-border);
+    }
+    .qf-card-title {
+        font-size: 0.98rem;
+        font-weight: 700;
+        line-height: 1.35;
+        margin-bottom: 0.25rem;
+        color: var(--qf-text);
+    }
+    .qf-paper-meta {
+        color: var(--qf-muted);
+        font-size: 0.82rem;
+        line-height: 1.4;
+        margin-bottom: 0.45rem;
+    }
+    .qf-paper-why {
+        color: var(--qf-text-soft);
+        font-size: 0.86rem;
+        line-height: 1.45;
+        margin-top: 0.35rem;
+    }
+    .qf-paper-rank {
+        color: var(--qf-cyan);
+        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+    .qf-empty-state {
+        border: 1px solid var(--qf-surface-border);
+        border-radius: 8px;
+        padding: 1rem 1.1rem;
+        background: var(--qf-bg);
+        box-shadow: var(--qf-shadow);
+    }
+    .qf-empty-title {
+        font-size: 1rem;
+        font-weight: 650;
+        margin-bottom: 0.35rem;
+    }
+    .qf-empty-body {
+        color: var(--qf-muted);
+        font-size: 0.92rem;
+        line-height: 1.5;
+    }
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--qf-surface-border);
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: var(--qf-shadow);
+    }
+    [data-testid="stExpander"] {
+        border-color: var(--qf-surface-border);
+        border-radius: 8px;
+    }
 
-	    .stTabs [data-baseweb="tab-list"] { gap: 0.4rem; border-bottom: 1px solid var(--qf-surface-border); }
+    .stTabs [data-baseweb="tab-list"] { gap: 0.4rem; border-bottom: 1px solid var(--qf-surface-border); }
     .stTabs [data-baseweb="tab"] {
         padding: 0.5rem 0.9rem;
         border-radius: 6px 6px 0 0;
         font-weight: 500;
     }
     .stTabs [aria-selected="true"] { font-weight: 600; }
+
+    @media (max-width: 768px) {
+        .main .block-container { padding-top: 0.75rem; }
+        h1 { font-size: 1.6rem; }
+        .qf-app-title { font-size: 1.55rem; }
+        .qf-app-subtitle { font-size: 0.9rem; }
+        .qf-results-title { font-size: 1.05rem; }
+        .qf-paper-card { padding: 0.7rem 0.8rem; }
+        .qf-card-title { font-size: 0.93rem; }
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -415,6 +425,7 @@ DISPLAY_COLUMNS = [
     "journal_quality_score",
     "citation_score",
     "recency_score",
+    "intent_match_score",
     "final_score",
     "total_score",
     "title",
@@ -424,6 +435,7 @@ DISPLAY_COLUMNS = [
     "publication_type",
     "citation_count",
     "purpose_fit_reason",
+    "intent_match_reason",
     "mandatory_review_reason",
     "expected_paper_reason",
     "api_discovery_reason",
@@ -477,6 +489,10 @@ FULL_COLUMNS = [
     "recency_score",
     "purpose_fit_score",
     "purpose_fit_reason",
+    "intent_match_score",
+    "intent_match_reason",
+    "intent_terms",
+    "intent_hits",
     "penalty_score",
     "final_score",
     "total_score",
@@ -516,7 +532,7 @@ FULL_COLUMNS = [
 SEARCH_MODE_UI_COPY = {
     "Learning mode": {
         "internal": SEARCH_PURPOSE_KNOWLEDGE,
-        "description": "Best for topic understanding. Prioritises guidelines, narrative reviews, systematic reviews, and landmark trials.",
+        "description": "Best for topic understanding. Prioritises narrative reviews, landmark conceptual reviews, and guidelines before evidence synthesis.",
     },
     "Research mode": {
         "internal": SEARCH_PURPOSE_RESEARCH,
@@ -826,10 +842,19 @@ def render_search_form() -> tuple[str, str, dict, bool]:
     render_mode_guide(search_purpose_label)
     with st.form("corepapers_search", clear_on_submit=False):
         topic = st.text_area(
-            "Topic or PICO question",
-            placeholder="cerebral venous thrombosis in adults; anticoagulation and recurrence",
-            height=128,
-            help="Use a disease, clinical question, exposure, complication, or rare presentation.",
+            "Topic or clinical question",
+            placeholder=(
+                "Examples:\n"
+                "• cerebral venous thrombosis in adults; anticoagulation and recurrence\n"
+                "• ventilator-induced lung injury; low tidal volume strategies\n"
+                "• new-onset atrial fibrillation in sepsis; rate vs rhythm control\n"
+                "• rare presentations of pheochromocytoma in pregnancy"
+            ),
+            height=148,
+            help=(
+                "Enter a disease, clinical question, exposure, complication, or rare presentation. "
+                "Refine further with PICO fields in the sidebar if needed."
+            ),
             key="topic_query",
         )
         submitted = st.form_submit_button("Run evidence search", type="primary", use_container_width=True)
@@ -838,10 +863,9 @@ def render_search_form() -> tuple[str, str, dict, bool]:
 
 def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, object]:
     google_notes = ""
-    email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
-    ncbi_api_key = app_secret("ncbi_api_key")
-    gemini_api_key = app_secret("gemini_api_key")
-    quartile_file = None
+    secret_email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
+    secret_ncbi_api_key = app_secret("ncbi_api_key")
+    secret_gemini_api_key = app_secret("gemini_api_key")
     with st.sidebar:
         render_sidebar_intro()
         with st.expander("PICO details", expanded=False):
@@ -859,6 +883,56 @@ def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, s
             intervention = st.text_input("Intervention or exposure", placeholder="Hydrocortisone")
             comparator = st.text_input("Comparator", placeholder="Placebo or usual care")
             outcome = st.text_input("Outcome", placeholder="Mortality, recurrence")
+
+        with st.expander("API keys and contact", expanded=False):
+            st.caption(
+                "Keys set in Streamlit secrets are used by default. Values entered here "
+                "override the secret for this session only and are never stored."
+            )
+            email_input = st.text_input(
+                "Contact email (NCBI / Unpaywall)",
+                value="",
+                placeholder=secret_email or "you@example.com",
+                help=(
+                    "Required by NCBI E-utilities and Unpaywall for polite use. "
+                    "Defaults to the secret-managed email if left blank."
+                ),
+                key="ncbi_email_input",
+            )
+            ncbi_api_key_input = st.text_input(
+                "NCBI API key (optional)",
+                value="",
+                type="password",
+                placeholder="••••••••" if secret_ncbi_api_key else "Paste NCBI key",
+                help="Raises PubMed rate limit from 3 to 10 requests/sec.",
+                key="ncbi_api_key_input",
+            )
+            gemini_api_key_input = st.text_input(
+                "Gemini API key (for topic primer)",
+                value="",
+                type="password",
+                placeholder="••••••••" if secret_gemini_api_key else "Paste Gemini key",
+                help="Optional. Enables AI topic primer for topics without a built-in profile.",
+                key="gemini_api_key_input",
+            )
+
+        with st.expander("Journal quartile overrides", expanded=False):
+            st.caption(
+                "Upload a CSV with columns 'journal' and 'quartile' (Q1–Q4) to override "
+                "or supply missing journal quartile data. Used only for journal-quality scoring."
+            )
+            quartile_file = st.file_uploader(
+                "Quartile CSV",
+                type=["csv"],
+                accept_multiple_files=False,
+                help="Header row must include 'journal' and 'quartile'. Extra columns are ignored.",
+                key="quartile_csv_upload",
+                label_visibility="collapsed",
+            )
+
+    email = email_input.strip() or secret_email
+    ncbi_api_key = ncbi_api_key_input.strip() or secret_ncbi_api_key
+    gemini_api_key = gemini_api_key_input.strip() or secret_gemini_api_key
     return (
         question_type,
         population,
@@ -892,7 +966,14 @@ def main() -> None:
 
     if submitted:
         if not topic.strip():
-            st.warning("Enter a research topic or question.")
+            pico_filled = any(field.strip() for field in (population, intervention, comparator, outcome))
+            if pico_filled:
+                st.warning(
+                    "Add a topic or clinical question in the main field — PICO details "
+                    "alone are not enough to start a search. Your PICO entries are kept."
+                )
+            else:
+                st.warning("Enter a research topic or question to start.")
             return
         quartile_overrides = load_quartile_file(quartile_file)
         context_kwargs = {
@@ -916,9 +997,11 @@ def main() -> None:
             status.write("- Building search layers and topic gates")
             def report_progress(message: str, completed: int, total: int) -> None:
                 if total:
-                    status.update(label=f"Searching sources ({completed}/{total} layers) - {message}")
+                    progress = f"Step {completed}/{total}"
+                    label = f"{progress} - {message}"
+                    status.update(label=label[:160])
                 else:
-                    status.update(label=message)
+                    status.update(label=message[:160])
                 status.write(f"- {message}")
 
             result = run_quality_first_search(
@@ -1049,7 +1132,7 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
         if is_primed and primer_status == "cached":
             chips.append(context_chip("Primer cached this session", "muted"))
     elif primer_status == "unavailable":
-        chips.append(context_chip("Primer unavailable: add Gemini key in Advanced", "muted"))
+        chips.append(context_chip("Primer unavailable — add a Gemini key in the sidebar", "muted"))
 
     mesh_records = result.get("mesh_discovered", []) or []
     descriptor_names = [
@@ -1070,6 +1153,15 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
         related = f", {related_count} related" if related_count else ""
         chips.append(context_chip(f"API supervisor: {len(api_pmids)} PMIDs{related}", "accent"))
 
+    tier_legend = (
+        '<div class="qf-tier-legend" role="note" aria-label="Evidence tier legend">'
+        '<span class="qf-tier-legend-label">Tiers:</span>'
+        f'{tier_badge("Tier 1")}<span class="qf-tier-legend-desc">guideline / SR / landmark trial</span>'
+        f'{tier_badge("Tier 2")}<span class="qf-tier-legend-desc">strong original research</span>'
+        f'{tier_badge("Tier 3")}<span class="qf-tier-legend-desc">supportive background</span>'
+        f'{tier_badge("Tier 4")}<span class="qf-tier-legend-desc">manual review</span>'
+        "</div>"
+    )
     render_html(
         f"""
         <div class="context-card">
@@ -1081,6 +1173,7 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
             </div>
           </div>
           <div class="chip-row">{"".join(chips)}</div>
+          {tier_legend}
         </div>
         """
     )
@@ -1452,10 +1545,11 @@ def section_order_for_mode(search_mode: str) -> list[str]:
     normalized_mode = internal_search_purpose(search_mode)
     return {
         SEARCH_PURPOSE_KNOWLEDGE: [
-            "Best review articles",
+            "Best narrative reviews",
             "Guidelines and consensus",
             "Foundational concepts",
             "Landmark clinical papers",
+            "Evidence synthesis",
             "Recent updates",
             "Background papers",
         ],
