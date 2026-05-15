@@ -128,6 +128,39 @@ INTENT_TERM_VARIANTS = {
     "ventilation": ["ventilator", "ventilatory"],
 }
 
+NON_HUMAN_CLINICAL_TERMS = [
+    "veterinary",
+    "veterinarian",
+    "canine",
+    "feline",
+    "equine",
+    "bovine",
+    "porcine",
+    "ovine",
+    "dog",
+    "dogs",
+    "cat",
+    "cats",
+    "horse",
+    "horses",
+    "cattle",
+    "calves",
+    "swine",
+    "sheep",
+    "goat",
+    "goats",
+    "rat",
+    "rats",
+    "mouse",
+    "mice",
+    "murine",
+    "rabbit",
+    "rabbits",
+    "animal model",
+    "animal models",
+    "experimental animals",
+]
+
 ICU_TERMS = [
     "icu",
     "intensive care",
@@ -468,6 +501,28 @@ def intent_coverage(terms: list[str], text: str) -> float:
         return 0.0
     hits = intent_term_hits(terms, text)
     return min(1.0, len(set(hits)) / len(set(terms)))
+
+
+def non_human_clinical_signal(paper: dict[str, Any]) -> list[str]:
+    text = normalize_space(
+        " ".join(
+            [
+                str(paper.get("title", "")),
+                str(paper.get("abstract", "")),
+                str(paper.get("journal", "")),
+                " ".join(
+                    str(item)
+                    for item in paper.get("publication_types", [])
+                    if isinstance(item, str)
+                ),
+            ]
+        )
+    ).lower()
+    hits = []
+    for term in NON_HUMAN_CLINICAL_TERMS:
+        if semantic_term_in_text(term, text):
+            hits.append(term)
+    return list(dict.fromkeys(hits))
 
 
 MAJOR_JOURNAL_TERMS = [
@@ -2635,6 +2690,13 @@ def apply_topic_penalties(
         penalty_total -= 6
         penalty_notes.append("Animal/basic science de-emphasized for clinical search (-6)")
 
+    non_human_hits = non_human_clinical_signal(paper)
+    if purpose in {SEARCH_PURPOSE_KNOWLEDGE, SEARCH_PURPOSE_RESEARCH} and non_human_hits:
+        penalty_total -= 35
+        penalty_notes.append(
+            "Non-human/veterinary clinical signal: " + ", ".join(non_human_hits[:4]) + " (-35)"
+        )
+
     requested_terms = user_intent_terms(context)
     if requested_terms:
         matched_terms = intent_term_hits(requested_terms, text)
@@ -2742,6 +2804,9 @@ def reason_for_tier(paper: dict[str, Any]) -> str:
     if paper.get("intent_match_reason"):
         bits.append(f"intent fit: {paper['intent_match_reason']}")
 
+    if paper.get("score_cap_reason"):
+        bits.append(paper["score_cap_reason"])
+
     penalty_notes = paper.get("penalty_notes", [])
     if penalty_notes:
         bits.append("penalties: " + "; ".join(penalty_notes))
@@ -2842,9 +2907,24 @@ def score_and_classify_paper(
     paper["penalty_notes"] = penalty_notes
     paper["base_score"] = base_total
     paper["final_score_raw"] = final_score_raw
+    paper["study_design"] = design
+    score_cap_reason = ""
+    purpose = normalized_search_purpose(context.search_purpose)
+    if purpose == SEARCH_PURPOSE_KNOWLEDGE and design == "Systematic review / meta-analysis":
+        if total_score > 59:
+            total_score = 59
+            score_cap_reason = "learning mode score-caps meta-analyses below the top learning pack"
+    non_human_hits = non_human_clinical_signal(paper)
+    paper["non_human_signal"] = ", ".join(non_human_hits)
+    if purpose in {SEARCH_PURPOSE_KNOWLEDGE, SEARCH_PURPOSE_RESEARCH} and non_human_hits:
+        if total_score > 39:
+            total_score = 39
+        score_cap_reason = (
+            score_cap_reason + "; " if score_cap_reason else ""
+        ) + "non-human/veterinary evidence score-capped for clinical learning"
+    paper["score_cap_reason"] = score_cap_reason
     paper["total_score"] = total_score
     paper["final_score"] = total_score
-    paper["study_design"] = design
     paper["citation_note"] = citation_note
     paper["citation_count_missing"] = paper.get("citation_count") is None
     paper["relevance_reason"] = relevance_reason
@@ -4104,6 +4184,9 @@ def mode_specific_tier_cap(paper: dict[str, Any], context: SearchContext) -> tup
     ):
         return 3, "requested modifiers are absent, so this is kept only as background"
 
+    if purpose in {SEARCH_PURPOSE_KNOWLEDGE, SEARCH_PURPOSE_RESEARCH} and non_human_clinical_signal(paper):
+        return 4, "non-human/veterinary evidence is not top clinical learning material"
+
     if purpose == SEARCH_PURPOSE_RESEARCH and design in {
         "Narrative review",
         "Landmark physiological review",
@@ -4445,6 +4528,8 @@ def why_included(paper: dict[str, Any]) -> str:
         reasons.append(paper["purpose_fit_reason"])
     if paper.get("intent_match_reason"):
         reasons.append(paper["intent_match_reason"])
+    if paper.get("score_cap_reason"):
+        reasons.append(paper["score_cap_reason"])
     if paper.get("penalty_notes"):
         reasons.append("penalties: " + "; ".join(paper["penalty_notes"]))
     if paper.get("tier_cap_reason"):

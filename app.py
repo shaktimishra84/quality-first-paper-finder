@@ -494,6 +494,7 @@ FULL_COLUMNS = [
     "intent_terms",
     "intent_hits",
     "penalty_score",
+    "score_cap_reason",
     "final_score",
     "total_score",
     "tier",
@@ -513,6 +514,7 @@ FULL_COLUMNS = [
     "topic_match_max_tier",
     "raw_relevance_score",
     "relevance_cap",
+    "non_human_signal",
     "verification",
     "evidence_group",
     "evidence_family",
@@ -1471,9 +1473,13 @@ def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) 
 def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
     if full_df.empty:
         return
-    render_html('<div class="section-kicker">Top ranked papers</div>')
+    cards_df = top_learning_rows(full_df, limit) if is_learning_result(full_df) else full_df.head(limit)
+    if cards_df.empty:
+        return
+    heading = "Top learning papers" if is_learning_result(full_df) else "Top ranked papers"
+    render_html(f'<div class="section-kicker">{e(heading)}</div>')
     cards: list[str] = []
-    for rank, (_, row) in enumerate(full_df.head(limit).iterrows(), start=1):
+    for rank, (_, row) in enumerate(cards_df.iterrows(), start=1):
         title = short_text(row.get("title", "(untitled)"), 190) or "(untitled)"
         url = paper_url(row)
         title_html = e(title)
@@ -1510,6 +1516,37 @@ def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
             """
         )
     render_html(f'<div class="top-papers">{"".join(cards)}</div>')
+
+
+def is_learning_result(df: pd.DataFrame) -> bool:
+    if df.empty or "search_mode" not in df.columns:
+        return False
+    return any(str(value) == SEARCH_PURPOSE_KNOWLEDGE for value in df["search_mode"].dropna().head(10))
+
+
+def top_learning_rows(df: pd.DataFrame, limit: int = 3) -> pd.DataFrame:
+    if df.empty:
+        return df
+    rows = df.copy()
+    design = rows.get("study_design", pd.Series("", index=rows.index)).astype(str)
+    section = rows.get("reading_section", pd.Series("", index=rows.index)).astype(str)
+    non_human = rows.get("non_human_signal", pd.Series("", index=rows.index)).fillna("").astype(str)
+    tier = rows.get("tier", pd.Series("", index=rows.index)).astype(str)
+    learning_mask = (
+        design.isin(["Narrative review", "Landmark physiological review"])
+        & non_human.str.strip().eq("")
+        & ~tier.isin(["Tier 4: Low priority", "Noise / manual review"])
+    )
+    learning_rows = rows[learning_mask]
+    if len(learning_rows) >= limit:
+        return learning_rows.head(limit)
+    fallback_mask = (
+        section.isin(["Best narrative reviews", "Guidelines and consensus", "Landmark clinical papers"])
+        & (design != "Systematic review / meta-analysis")
+        & non_human.str.strip().eq("")
+        & ~tier.isin(["Tier 4: Low priority", "Noise / manual review"])
+    )
+    return rows[fallback_mask].head(limit)
 
 
 def render_section_overview(df: pd.DataFrame, ordered_sections: list[str]) -> None:

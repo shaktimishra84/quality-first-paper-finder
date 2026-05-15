@@ -177,6 +177,7 @@ def test_learning_mode_prioritizes_narrative_reviews_over_meta_analysis() -> Non
     assert narrative["reading_section"] == "Best narrative reviews"
     assert meta["reading_section"] == "Evidence synthesis"
     assert meta["tier"] == "Tier 3: Background"
+    assert meta["total_score"] <= 59
 
 
 def test_profile_topic_search_layers_preserve_user_intent_modifiers() -> None:
@@ -231,6 +232,35 @@ def test_requested_intent_modifiers_downrank_generic_profile_matches() -> None:
     assert generic_scored["tier"] == "Tier 3: Background"
     assert focused_scored["intent_match_score"] == 6
     assert focused_scored["total_score"] > generic_scored["total_score"]
+
+
+def test_learning_mode_demotes_veterinary_systematic_reviews() -> None:
+    paper = {
+        "title": "Acute Respiratory Distress Syndrome in Veterinary Medicine-The ARDSVet Definitions.",
+        "abstract": "Veterinary medicine consensus definitions for acute respiratory distress syndrome in dogs and cats.",
+        "publication_types": ["Consensus Statement", "Journal Article", "Systematic Review"],
+        "journal": "Journal of veterinary emergency and critical care",
+        "pmid": "40838381",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/40838381/",
+        "citation_count": 5,
+        "citation_source": "OpenAlex",
+        "year": 2025,
+    }
+
+    result = score_and_classify_paper(
+        paper,
+        SearchContext(
+            topic="acute respiratory distress syndrome",
+            search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+        ),
+        {},
+    )
+
+    assert result["study_design"] == "Systematic review / meta-analysis"
+    assert result["tier"] == "Tier 4: Low priority"
+    assert result["total_score"] <= 39
+    assert "veterinary" in result["non_human_signal"]
+    assert "non-human" in result["score_cap_reason"]
 
 
 def test_case_report_ranks_highest_for_rare_mode() -> None:
