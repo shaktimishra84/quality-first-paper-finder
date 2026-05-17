@@ -46,6 +46,16 @@ http://localhost:8512
 
 The app needs outbound network access to PubMed and the discovery/enrichment APIs. If it is run inside a network-blocked sandbox, it will show source errors and will not admit papers. Unpaywall title search uses an email from app secrets when one is configured.
 
+Optional private API keys can be supplied through Streamlit secrets or matching environment variables:
+
+```toml
+ncbi_email = "you@example.com"
+ncbi_api_key = "..."
+semantic_scholar_api_key = "..."
+```
+
+Semantic Scholar requests send the key as `x-api-key` and are throttled to stay below the approved 1 request/second limit.
+
 ## Safety rules implemented
 
 - No AI-memory references.

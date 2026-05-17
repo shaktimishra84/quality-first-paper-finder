@@ -6,6 +6,7 @@ import functools
 import io
 import json
 import re
+import threading
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -35,6 +36,7 @@ MESH_MAX_QUERY_CLAUSES = 40
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper"
 SEMANTIC_SCHOLAR_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+SEMANTIC_SCHOLAR_MIN_INTERVAL_SECONDS = 1.05
 EUROPE_PMC_SEARCH_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 CROSSREF_WORKS_URL = "https://api.crossref.org/works"
 UNPAYWALL_SEARCH_URL = "https://api.unpaywall.org/v2/search/"
@@ -45,6 +47,9 @@ REQUEST_TIMEOUT = (5, 12)
 DEFAULT_HEADERS = {
     "User-Agent": "QualityFirstPaperFinder/1.0; verified-metadata-literature-tool"
 }
+
+_SEMANTIC_SCHOLAR_LOCK = threading.Lock()
+_SEMANTIC_SCHOLAR_LAST_REQUEST_AT = 0.0
 
 STOPWORDS = {
     "a",
@@ -897,6 +902,7 @@ def run_quality_first_search(
     manual_google_scholar_notes: str = "",
     progress_callback: Callable[[str, int, int], None] | None = None,
     ncbi_api_key: str = "",
+    semantic_scholar_api_key: str = "",
 ) -> dict[str, Any]:
     context = dataclass_replace(
         context,
@@ -990,6 +996,7 @@ def run_quality_first_search(
             context,
             email=email,
             ncbi_api_key=ncbi_api_key,
+            semantic_scholar_api_key=semantic_scholar_api_key,
             per_query_limit=max(10, min(25, max_results_per_layer // 3)),
         )
         api_pmids = list(api_discovery.get("pmids", []))
@@ -1071,7 +1078,7 @@ def run_quality_first_search(
 
     def _enrich_semantic_scholar(paper: dict[str, Any]) -> None:
         try:
-            enrich_with_semantic_scholar(paper)
+            enrich_with_semantic_scholar(paper, api_key=semantic_scholar_api_key)
         except requests.RequestException as exc:
             paper.setdefault("enrichment_warnings", []).append(
                 f"Semantic Scholar unavailable: {friendly_request_error(exc)}"
@@ -1092,7 +1099,8 @@ def run_quality_first_search(
             total_layers,
             total_layers,
         )
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        semantic_workers = 1 if semantic_scholar_api_key.strip() else 2
+        with ThreadPoolExecutor(max_workers=semantic_workers) as executor:
             list(executor.map(_enrich_semantic_scholar, enrichment_candidates))
 
     scored = [score_and_classify_paper(paper, context, quartile_overrides) for paper in accepted]
@@ -1167,6 +1175,7 @@ def run_api_discovery_supervisor(
     context: SearchContext,
     email: str = "",
     ncbi_api_key: str = "",
+    semantic_scholar_api_key: str = "",
     per_query_limit: int = 15,
 ) -> dict[str, Any]:
     """Use public scholarly APIs as a retrieval supervisor before scoring.
@@ -1268,7 +1277,11 @@ def run_api_discovery_supervisor(
 
     for layer_name, query, limit, reason in api_supervisor_semantic_scholar_queries(context, per_query_limit):
         try:
-            found_pmids, found_dois = search_semantic_scholar_identifiers(query, limit=limit)
+            found_pmids, found_dois = search_semantic_scholar_identifiers(
+                query,
+                limit=limit,
+                api_key=semantic_scholar_api_key,
+            )
             add_pmids(found_pmids, layer_name, query, reason)
             if found_dois:
                 add_dois(
@@ -1937,17 +1950,42 @@ def search_crossref_dois(query: str, rows: int = 15, email: str = "") -> list[st
     return list(_cached_search_crossref_dois(query.strip(), max(1, min(rows, 50)), (email or "").strip()))
 
 
+def semantic_scholar_headers(api_key: str = "") -> dict[str, str]:
+    headers = dict(DEFAULT_HEADERS)
+    cleaned = (api_key or "").strip()
+    if cleaned:
+        headers["x-api-key"] = cleaned
+    return headers
+
+
+def throttle_semantic_scholar(api_key: str = "") -> None:
+    if not (api_key or "").strip():
+        return
+    global _SEMANTIC_SCHOLAR_LAST_REQUEST_AT
+    with _SEMANTIC_SCHOLAR_LOCK:
+        now = time.monotonic()
+        wait_for = SEMANTIC_SCHOLAR_MIN_INTERVAL_SECONDS - (now - _SEMANTIC_SCHOLAR_LAST_REQUEST_AT)
+        if wait_for > 0:
+            time.sleep(wait_for)
+        _SEMANTIC_SCHOLAR_LAST_REQUEST_AT = time.monotonic()
+
+
 @functools.lru_cache(maxsize=256)
-def _cached_search_semantic_scholar_identifiers(query: str, limit: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _cached_search_semantic_scholar_identifiers(
+    query: str,
+    limit: int,
+    api_key: str,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     params = {
         "query": query,
         "limit": str(max(1, min(limit, 100))),
         "fields": "title,year,url,externalIds,citationCount,journal",
     }
+    throttle_semantic_scholar(api_key)
     response = requests.get(
         SEMANTIC_SCHOLAR_SEARCH_URL,
         params=params,
-        headers=DEFAULT_HEADERS,
+        headers=semantic_scholar_headers(api_key),
         timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
@@ -1969,8 +2007,16 @@ def _cached_search_semantic_scholar_identifiers(query: str, limit: int) -> tuple
     return tuple(dict.fromkeys(pmids)), tuple(dict.fromkeys(dois))
 
 
-def search_semantic_scholar_identifiers(query: str, limit: int = 15) -> tuple[list[str], list[str]]:
-    pmids, dois = _cached_search_semantic_scholar_identifiers(query.strip(), max(1, min(limit, 100)))
+def search_semantic_scholar_identifiers(
+    query: str,
+    limit: int = 15,
+    api_key: str = "",
+) -> tuple[list[str], list[str]]:
+    pmids, dois = _cached_search_semantic_scholar_identifiers(
+        query.strip(),
+        max(1, min(limit, 100)),
+        (api_key or "").strip(),
+    )
     return list(pmids), list(dois)
 
 
@@ -2624,7 +2670,7 @@ def enrich_with_openalex(paper: dict[str, Any], email: str = "") -> None:
         paper["year"] = work["publication_year"]
 
 
-def enrich_with_semantic_scholar(paper: dict[str, Any]) -> None:
+def enrich_with_semantic_scholar(paper: dict[str, Any], api_key: str = "") -> None:
     identifier = ""
     doi = clean_doi(paper.get("doi", ""))
     pmid = paper.get("pmid", "").strip()
@@ -2637,10 +2683,11 @@ def enrich_with_semantic_scholar(paper: dict[str, Any]) -> None:
 
     fields = "title,url,citationCount,influentialCitationCount,year,journal,externalIds"
     url = f"{SEMANTIC_SCHOLAR_URL}/{urllib.parse.quote(identifier, safe=':')}"
+    throttle_semantic_scholar(api_key)
     response = requests.get(
         url,
         params={"fields": fields},
-        headers=DEFAULT_HEADERS,
+        headers=semantic_scholar_headers(api_key),
         timeout=REQUEST_TIMEOUT,
     )
     if response.status_code == 404:

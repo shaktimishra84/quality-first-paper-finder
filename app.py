@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -813,9 +814,12 @@ def render_sidebar_intro() -> None:
 
 def app_secret(name: str) -> str:
     try:
-        return str(st.secrets.get(name, "") or "").strip()
+        secret = str(st.secrets.get(name, "") or "").strip()
     except Exception:
-        return ""
+        secret = ""
+    if secret:
+        return secret
+    return (os.environ.get(name) or os.environ.get(name.upper()) or "").strip()
 
 
 def render_search_form() -> tuple[str, str, dict, bool]:
@@ -863,11 +867,12 @@ def render_search_form() -> tuple[str, str, dict, bool]:
     return topic, search_purpose, purpose_config, submitted
 
 
-def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, object]:
+def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, str, object]:
     google_notes = ""
     email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
     ncbi_api_key = app_secret("ncbi_api_key")
     gemini_api_key = app_secret("gemini_api_key")
+    semantic_scholar_api_key = app_secret("semantic_scholar_api_key") or app_secret("s2_api_key")
     quartile_file = None
     with st.sidebar:
         render_sidebar_intro()
@@ -897,6 +902,7 @@ def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, s
         email,
         ncbi_api_key,
         gemini_api_key,
+        semantic_scholar_api_key,
         quartile_file,
     )
 
@@ -915,6 +921,7 @@ def main() -> None:
         email,
         ncbi_api_key,
         gemini_api_key,
+        semantic_scholar_api_key,
         quartile_file,
     ) = render_advanced_sidebar()
 
@@ -969,6 +976,7 @@ def main() -> None:
                 manual_google_scholar_notes=google_notes,
                 progress_callback=report_progress,
                 ncbi_api_key=ncbi_api_key,
+                semantic_scholar_api_key=semantic_scholar_api_key,
             )
             status.update(
                 label=f"Done — {len(result['papers'])} papers admitted",
