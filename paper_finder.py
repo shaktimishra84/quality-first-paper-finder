@@ -4997,6 +4997,116 @@ def format_counter(counter: Counter[str]) -> str:
     return ", ".join(f"{key}: {value}" for key, value in counter.most_common())
 
 
+def citation_field(paper: dict[str, Any], key: str) -> str:
+    value = paper.get(key, "")
+    if value is None:
+        return ""
+    if isinstance(value, float) and value != value:
+        return ""
+    text = normalize_space(str(value))
+    return "" if text.lower() == "nan" else text
+
+
+def citation_authors(paper: dict[str, Any]) -> list[str]:
+    authors = citation_field(paper, "authors")
+    if not authors:
+        return []
+    return [author.strip() for author in authors.split(";") if author.strip()]
+
+
+def citation_year(paper: dict[str, Any]) -> str:
+    value = citation_field(paper, "year")
+    match = re.search(r"\b(1[89]\d{2}|20\d{2}|21\d{2})\b", value)
+    return match.group(1) if match else ""
+
+
+def citation_key_for_paper(paper: dict[str, Any], fallback_index: int = 1) -> str:
+    authors = citation_authors(paper)
+    author_seed = authors[0].split()[0] if authors else "paper"
+    title_words = keywords(citation_field(paper, "title"))
+    title_seed = title_words[0] if title_words else "study"
+    year = citation_year(paper) or "nd"
+    key = re.sub(r"[^A-Za-z0-9]+", "", f"{author_seed}{year}{title_seed}") or f"paper{fallback_index}"
+    return key[:64]
+
+
+def bibtex_escape(value: str) -> str:
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "{": r"\{",
+        "}": r"\}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+    }
+    return "".join(replacements.get(char, char) for char in value)
+
+
+def papers_to_bibtex(papers: list[dict[str, Any]]) -> str:
+    entries: list[str] = []
+    used_keys: Counter[str] = Counter()
+    for index, paper in enumerate(papers, start=1):
+        base_key = citation_key_for_paper(paper, index)
+        used_keys[base_key] += 1
+        citation_key = base_key if used_keys[base_key] == 1 else f"{base_key}{used_keys[base_key]}"
+        fields: list[tuple[str, str]] = [
+            ("title", citation_field(paper, "title")),
+            ("author", " and ".join(citation_authors(paper))),
+            ("journal", citation_field(paper, "journal")),
+            ("year", citation_year(paper)),
+            ("doi", clean_doi(citation_field(paper, "doi"))),
+            ("pmid", normalize_pmid(citation_field(paper, "pmid"))),
+            ("url", citation_field(paper, "url")),
+            ("abstract", citation_field(paper, "abstract")),
+        ]
+        field_lines = [
+            f"  {name} = {{{bibtex_escape(value)}}}"
+            for name, value in fields
+            if value
+        ]
+        entries.append("@article{" + citation_key + ",\n" + ",\n".join(field_lines) + "\n}")
+    return "\n\n".join(entries) + ("\n" if entries else "")
+
+
+def ris_line(tag: str, value: str) -> str:
+    return f"{tag}  - {normalize_space(value)}"
+
+
+def papers_to_ris(papers: list[dict[str, Any]]) -> str:
+    entries: list[str] = []
+    for paper in papers:
+        lines = ["TY  - JOUR"]
+        title = citation_field(paper, "title")
+        if title:
+            lines.append(ris_line("TI", title))
+        for author in citation_authors(paper):
+            lines.append(ris_line("AU", author))
+        journal = citation_field(paper, "journal")
+        if journal:
+            lines.append(ris_line("T2", journal))
+            lines.append(ris_line("JO", journal))
+        year = citation_year(paper)
+        if year:
+            lines.append(ris_line("PY", year))
+        doi = clean_doi(citation_field(paper, "doi"))
+        if doi:
+            lines.append(ris_line("DO", doi))
+        pmid = normalize_pmid(citation_field(paper, "pmid"))
+        if pmid:
+            lines.append(ris_line("AN", f"PMID:{pmid}"))
+        url = citation_field(paper, "url")
+        if url:
+            lines.append(ris_line("UR", url))
+        abstract = citation_field(paper, "abstract")
+        if abstract:
+            lines.append(ris_line("AB", abstract))
+        lines.append("ER  -")
+        entries.append("\n".join(lines))
+    return "\n\n".join(entries) + ("\n" if entries else "")
+
+
 def keywords(text: str) -> list[str]:
     words = re.findall(r"[a-zA-Z][a-zA-Z0-9-]{2,}", text.lower())
     return [word for word in words if word not in STOPWORDS]

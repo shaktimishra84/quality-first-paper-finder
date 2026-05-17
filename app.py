@@ -16,6 +16,8 @@ from paper_finder import (
     SEARCH_PURPOSE_RARE,
     SEARCH_PURPOSE_RESEARCH,
     SearchContext,
+    papers_to_bibtex,
+    papers_to_ris,
     parse_quartile_overrides,
     run_quality_first_search,
     search_purpose_config,
@@ -1929,6 +1931,9 @@ def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
 
     top_results = display_df.head(25)
     pmids = "\n".join(full_df["pmid"].dropna().astype(str).loc[lambda s: s.str.len() > 0].tolist())
+    citation_records = full_df.to_dict("records")
+    bibtex = papers_to_bibtex(citation_records)
+    ris = papers_to_ris(citation_records)
 
     st.subheader("Full database")
     st.dataframe(
@@ -1961,6 +1966,19 @@ def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
         data=pmids.encode("utf-8"),
         file_name="quality_first_pmids.txt",
         mime="text/plain",
+    )
+    col4, col5 = st.columns(2)
+    col4.download_button(
+        "Download BibTeX",
+        data=bibtex.encode("utf-8"),
+        file_name="quality_first_references.bib",
+        mime="application/x-bibtex",
+    )
+    col5.download_button(
+        "Download RIS",
+        data=ris.encode("utf-8"),
+        file_name="quality_first_references.ris",
+        mime="application/x-research-info-systems",
     )
 
 
