@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -26,21 +27,39 @@ def get_download_folder() -> Path:
     return Path(path_str)
 
 
-def get_ncbi_email() -> str:
-    """Get NCBI email from sidebar or Streamlit secrets."""
-    if "secrets" in dir(st):
+def _resolve_secret_email() -> str:
+    """Resolve a contact email from secrets/env, matching the search path.
+
+    Checks ncbi_email, contact_email, then email (Streamlit secrets first,
+    then environment variables).
+    """
+    for name in ("ncbi_email", "contact_email", "email"):
         try:
-            email = st.secrets.get("ncbi_email", "")
-            if email:
-                return email
+            value = str(st.secrets.get(name, "") or "").strip()
         except Exception:
-            pass
+            value = ""
+        if not value:
+            value = (os.environ.get(name) or os.environ.get(name.upper()) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def get_ncbi_email() -> str:
+    """Get the contact email used for Unpaywall.
+
+    Prefers a value already configured in Streamlit secrets / env; only falls
+    back to a sidebar input when none is configured.
+    """
+    configured = _resolve_secret_email()
+    if configured:
+        return configured
 
     email = st.sidebar.text_input(
         "NCBI Email (for Unpaywall)",
         value=st.session_state.get("ncbi_email", ""),
         type="password",
-        help="Required for Unpaywall API access. Your actual email address.",
+        help="Required for Unpaywall PDF lookup. Use your real email address.",
     )
     st.session_state["ncbi_email"] = email
     return email
