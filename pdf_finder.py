@@ -458,6 +458,63 @@ def find_legal_pdf(
     )
 
 
+def _source_fetch_rank(source: PDFSource) -> int:
+    """Order sources by how reliably they serve a PDF to a server fetch."""
+    name = (source.source or "").lower()
+    url = (source.url or "").lower()
+    if "ptpmcrender" in url or "oa render" in name:
+        return 0
+    if "pubmed central" in name:
+        return 1
+    if "europe pmc" in name:
+        return 2
+    if "semantic scholar" in name:
+        return 3
+    if "openalex" in name:
+        return 4
+    if "unpaywall" in name:
+        return 5
+    return 6
+
+
+def find_all_pdf_sources(
+    pmid: str = "", doi: str = "", email: str = "", s2_api_key: str = ""
+) -> list[PDFSource]:
+    """Collect candidate OA PDF sources from every resolver (not just the first).
+
+    Returns a de-duplicated list ordered by fetch reliability, so the download
+    step can try each URL until one returns a genuine PDF.
+    """
+    collected: list[PDFSource] = []
+
+    if doi:
+        result = _check_unpaywall_doi(doi, email)
+        if result.has_pdf:
+            collected.extend(result.sources or [])
+    if pmid:
+        for result in (_check_pmc_oa_pmid(pmid), _check_europe_pmc_pmid(pmid)):
+            if result.has_pdf:
+                collected.extend(result.sources or [])
+    if doi or pmid:
+        result = _check_semantic_scholar(pmid=pmid, doi=doi, api_key=s2_api_key)
+        if result.has_pdf:
+            collected.extend(result.sources or [])
+    if doi:
+        result = _check_openalex_doi(doi)
+        if result.has_pdf:
+            collected.extend(result.sources or [])
+
+    seen: set[str] = set()
+    unique: list[PDFSource] = []
+    for source in collected:
+        if source.url and source.url not in seen:
+            seen.add(source.url)
+            unique.append(source)
+
+    unique.sort(key=_source_fetch_rank)
+    return unique
+
+
 def get_pdf_status_label(result: PDFSearchResult) -> str:
     """Return a user-friendly status label for UI display."""
     if result.has_pdf:

@@ -311,6 +311,12 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
                 mime="application/zip",
                 key="download_zip_file",
             )
+            if packaged < len(found):
+                st.info(
+                    f"{len(found) - packaged} found PDF(s) couldn't be downloaded "
+                    "automatically (the host blocks server downloads). Open them "
+                    "via the ✅ links above to grab them in your browser."
+                )
         else:
             st.warning(
                 "The sources listed open-access PDFs, but none could be downloaded "

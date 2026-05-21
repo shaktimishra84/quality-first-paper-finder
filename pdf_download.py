@@ -7,7 +7,7 @@ from typing import Optional
 
 import pandas as pd
 
-from pdf_finder import find_legal_pdf
+from pdf_finder import find_all_pdf_sources
 from pdf_storage import PDFMetadata, PDFStorage
 
 
@@ -66,16 +66,17 @@ def generate_download_zip(
             pmid = str(paper.get("pmid", ""))
             doi = str(paper.get("doi", ""))
 
-            # Find PDF
-            result = find_legal_pdf(pmid=pmid, doi=doi, email=email, s2_api_key=s2_api_key)
-
-            if not result.has_pdf or not result.best_source:
+            # Collect every OA source for this paper, then try each URL until
+            # one yields a genuine PDF (publisher links often block bots while
+            # a PMC/Europe PMC copy of the same paper downloads fine).
+            candidate_sources = find_all_pdf_sources(
+                pmid=pmid, doi=doi, email=email, s2_api_key=s2_api_key
+            )
+            if not candidate_sources:
                 continue
 
-            # Try each discovered source URL until one yields a genuine PDF.
-            candidate_sources = result.sources or [result.best_source]
             content = None
-            used_source = result.best_source
+            used_source = candidate_sources[0]
             for source in candidate_sources:
                 fetched = _fetch_pdf_bytes(source.url)
                 if fetched is not None:
