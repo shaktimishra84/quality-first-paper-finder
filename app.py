@@ -1426,7 +1426,8 @@ def render_paper_table(
                 str(row.get("pmid", "")),
                 str(row.get("doi", "")),
                 str(row.get("title", "")),
-                row_idx
+                row_idx,
+                section_key=key
             )
         with cb_cols[1]:
             st.caption(short_text(row.get("title", "(untitled)"), 80))
@@ -1531,7 +1532,8 @@ def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
                 str(row.get("pmid", "")),
                 str(row.get("doi", "")),
                 str(row.get("title", "")),
-                rank
+                rank,
+                section_key="top_papers"
             )
         with cb_cols[1]:
             st.caption(short_text(row.get("title", "(untitled)"), 80))

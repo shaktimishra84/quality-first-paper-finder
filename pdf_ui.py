@@ -218,7 +218,7 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
             st.caption("Select papers to download")
 
 
-def render_paper_checkbox(pmid: str, doi: str = "", title: str = "", idx: int | None = None) -> bool:
+def render_paper_checkbox(pmid: str, doi: str = "", title: str = "", idx: int | None = None, section_key: str = "") -> bool:
     """Render checkbox for paper selection. Uses PMID/DOI as stable key."""
     init_selection_state()
 
@@ -234,7 +234,8 @@ def render_paper_checkbox(pmid: str, doi: str = "", title: str = "", idx: int | 
 
     is_selected = selection_key in st.session_state.selected_papers
 
-    checkbox_key = f"paper_select_{selection_key.replace(':', '_')}"
+    # Make checkbox key unique per section to avoid duplicate key errors
+    checkbox_key = f"paper_select_{section_key}_{selection_key.replace(':', '_')}" if section_key else f"paper_select_{selection_key.replace(':', '_')}"
     checked = st.checkbox(
         "Download",
         value=is_selected,
