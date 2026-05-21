@@ -1419,8 +1419,8 @@ def render_paper_table(
 
     st.divider()
     st.caption("Select papers above to download as ZIP")
-    cb_cols = st.columns([1, 2, 1, 1, 1])
     for row_idx, (_, row) in enumerate(filtered.iterrows()):
+        cb_cols = st.columns([0.5, 3, 1, 1.2, 1.5])
         with cb_cols[0]:
             render_paper_checkbox(
                 str(row.get("pmid", "")),
@@ -1524,8 +1524,8 @@ def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
 
     st.divider()
     st.caption("Select papers above to download as ZIP")
-    cb_cols = st.columns([1, 2, 1, 1, 1])
     for rank, (_, row) in enumerate(cards_df.iterrows(), start=0):
+        cb_cols = st.columns([0.5, 3, 1, 1.2, 1.5])
         with cb_cols[0]:
             render_paper_checkbox(
                 str(row.get("pmid", "")),
