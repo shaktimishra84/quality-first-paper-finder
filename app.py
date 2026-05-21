@@ -25,9 +25,11 @@ from paper_finder import (
     topic_profile,
 )
 from pdf_ui import (
+    MAX_SELECTIONS,
     init_selection_state,
     render_download_button,
     render_paper_checkbox,
+    select_papers,
     show_pdf_settings,
 )
 
@@ -1027,7 +1029,8 @@ def main() -> None:
 
     tabs = st.tabs(
         [
-            "Papers",
+            "Papers (Tier 1-2)",
+            "Background (Tier 3-4)",
             "Evidence review",
             "Expected papers",
             "Knowledge summary",
@@ -1037,24 +1040,31 @@ def main() -> None:
     )
 
     with tabs[0]:
-        render_mode_sections(result, df, full_df)
+        render_tier_groups(df, full_df, tiers=(1, 2), allow_select_all=True, show_context=True)
         st.divider()
         st.subheader("📥 Find & download selected papers")
         render_download_button(full_df, topic, email)
 
     with tabs[1]:
-        render_evidence_review(result)
+        st.caption(
+            "Tier 3–4 are manual selection only. Papers you tick here are added to "
+            "your selection — find & download them from the **Papers (Tier 1-2)** tab."
+        )
+        render_tier_groups(df, full_df, tiers=(3, 4), allow_select_all=False, show_context=False)
 
     with tabs[2]:
-        render_expected_papers(result)
+        render_evidence_review(result)
 
     with tabs[3]:
-        render_knowledge_summary(result["summary"])
+        render_expected_papers(result)
 
     with tabs[4]:
-        render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
+        render_knowledge_summary(result["summary"])
 
     with tabs[5]:
+        render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
+
+    with tabs[6]:
         render_exports(full_df, display_df)
 
 
@@ -1348,7 +1358,7 @@ def render_paper_table(
     if filtered.empty:
         return
 
-    st.caption("☑️ Check papers to select them for download (up to 10 at a time)")
+    st.caption(f"☑️ Check papers to add them to your selection (up to {MAX_SELECTIONS} total)")
 
     # Shared column ratios so the header and every row line up.
     col_ratios = [0.5, 5.5, 1.3, 1.6, 0.8, 1.0, 1.3, 0.8]
@@ -1424,38 +1434,93 @@ def render_paper_table(
 
 
 
-def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) -> None:
+TIER_TAB_LABELS = {
+    1: "Tier 1 — Must-read",
+    2: "Tier 2 — Useful",
+    3: "Tier 3 — Background",
+    4: "Tier 4 — Manual review",
+}
+
+# Cap rows rendered per tier so the native table stays responsive.
+TIER_DISPLAY_LIMIT = 200
+
+
+def render_tier_section(
+    tier_df: pd.DataFrame,
+    full_df: pd.DataFrame,
+    tier_num: int,
+    allow_select_all: bool,
+) -> None:
+    count = len(tier_df)
+    label = TIER_TAB_LABELS.get(tier_num, f"Tier {tier_num}")
+    with st.expander(f"{label} ({count} papers)", expanded=tier_num <= 2):
+        if allow_select_all:
+            top_n = min(MAX_SELECTIONS, count)
+            action_col, hint_col = st.columns([1, 3])
+            with action_col:
+                if st.button(
+                    f"Select all (top {top_n})",
+                    key=f"selall_tier_{tier_num}",
+                    use_container_width=True,
+                ):
+                    added, cap_reached = select_papers(
+                        tier_df.head(MAX_SELECTIONS).to_dict("records")
+                    )
+                    message = (
+                        f"Added {added} Tier {tier_num} paper(s)."
+                        if added
+                        else "No new papers added."
+                    )
+                    if cap_reached:
+                        message += f" Selection cap of {MAX_SELECTIONS} reached."
+                    st.toast(message, icon="✅")
+                    st.rerun()
+            with hint_col:
+                st.caption(
+                    f"Selects the top {top_n} by rank (cap {MAX_SELECTIONS} total). "
+                    "Tick more below to add manually."
+                )
+        else:
+            st.caption("Manual selection only — tick the papers you want.")
+
+        display_df = tier_df.head(TIER_DISPLAY_LIMIT)
+        if count > TIER_DISPLAY_LIMIT:
+            st.caption(f"Showing the top {TIER_DISPLAY_LIMIT} of {count} by rank.")
+        render_paper_table(
+            display_df,
+            f"No {label} papers.",
+            full_df=full_df,
+            tier_filter=False,
+            key=f"tier_tbl_{tier_num}",
+        )
+
+
+def render_tier_groups(
+    df: pd.DataFrame,
+    full_df: pd.DataFrame,
+    tiers: tuple[int, ...],
+    allow_select_all: bool,
+    show_context: bool = False,
+) -> None:
     if df.empty:
         st.warning("No papers were admitted.")
         return
-    search_mode = result.get("search_purpose") or result.get("search_mode") or ""
-    search_mode_label = display_search_purpose(search_mode)
-    sections = section_order_for_mode(search_mode)
-    discovered = [section for section in df.get("reading_section", pd.Series(dtype=str)).dropna().unique()]
-    ordered_sections = [section for section in sections if section in discovered]
-    ordered_sections.extend(section for section in discovered if section not in ordered_sections)
+    if show_context:
+        render_top_paper_cards(full_df, limit=3)
 
-    st.caption(f"{len(df)} papers grouped for **{search_mode_label or 'selected search mode'}**. Ranking and tiers change with this purpose.")
-    render_top_paper_cards(full_df, limit=3)
-    render_section_overview(df, ordered_sections)
-
-    for index, section in enumerate(ordered_sections):
-        section_df = section_rows(df, section, DISPLAY_COLUMNS, limit=500)
-        if section_df.empty:
+    shown = False
+    for tier_num in tiers:
+        if "tier" in df:
+            tier_df = df[df["tier"].apply(tier_number) == tier_num]
+        else:
+            tier_df = df.iloc[0:0]
+        if tier_df.empty:
             continue
-        tier_1 = int((section_df.get("tier") == "Tier 1: Must-read").sum()) if "tier" in section_df else 0
-        label = f"{section} ({len(section_df)} papers"
-        if tier_1:
-            label += f", {tier_1} Tier 1"
-        label += ")"
-        with st.expander(label, expanded=index < 2):
-            render_paper_table(
-                section_df,
-                f"No papers in {section}.",
-                full_df=full_df,
-                tier_filter=True,
-                key=f"tbl_mode_{index}",
-            )
+        shown = True
+        render_tier_section(tier_df, full_df, tier_num, allow_select_all)
+
+    if not shown:
+        st.info("No papers in these tiers for this search.")
 
 
 def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
@@ -1539,35 +1604,6 @@ def top_learning_rows(df: pd.DataFrame, limit: int = 3) -> pd.DataFrame:
         & ~tier.isin(["Tier 4: Low priority", "Noise / manual review"])
     )
     return rows[fallback_mask].head(limit)
-
-
-def render_section_overview(df: pd.DataFrame, ordered_sections: list[str]) -> None:
-    if df.empty or not ordered_sections:
-        return
-    tiles = []
-    for section in ordered_sections:
-        rows = df[df["reading_section"] == section] if "reading_section" in df else pd.DataFrame()
-        if rows.empty:
-            continue
-        tier_1 = int((rows.get("tier") == "Tier 1: Must-read").sum()) if "tier" in rows else 0
-        designs = rows.get("study_design", pd.Series(dtype=str)).dropna()
-        top_design = designs.mode().iloc[0] if not designs.empty else ""
-        meta_bits = [f"{len(rows)} papers"]
-        if tier_1:
-            meta_bits.append(f"{tier_1} Tier 1")
-        if top_design:
-            meta_bits.append(short_text(top_design, 42))
-        tiles.append(
-            f"""
-            <div class="qf-section-tile">
-              <div class="qf-section-tile-title">{e(section)}</div>
-              <div class="qf-section-tile-meta">{e(' | '.join(meta_bits))}</div>
-            </div>
-            """
-        )
-    if tiles:
-        render_html('<div class="qf-section-caption">Section overview</div>')
-        render_html(f'<div class="qf-section-grid">{"".join(tiles)}</div>')
 
 
 def section_order_for_mode(search_mode: str) -> list[str]:

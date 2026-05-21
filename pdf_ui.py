@@ -12,7 +12,7 @@ from pdf_finder import find_legal_pdf, get_pdf_status_label, PDFSearchResult
 from pdf_storage import PDFMetadata, PDFStorage
 
 # Maximum number of papers a user may select for download at once.
-MAX_SELECTIONS = 10
+MAX_SELECTIONS = 50
 
 
 def get_download_folder() -> Path:
@@ -341,24 +341,54 @@ def _on_paper_checkbox_change(checkbox_key: str, selection_key: str) -> None:
         st.session_state.selected_papers.pop(selection_key, None)
 
 
+def selection_key_for_row(pmid: str = "", doi: str = "", title: str = "") -> str:
+    """Stable selection key for a paper: PMID, else DOI, else title, else 'unknown'."""
+    if pmid and pmid.strip():
+        return pmid.strip()
+    if doi and doi.strip():
+        return doi.strip()
+    if title and title.strip():
+        return title.strip()[:100]
+    return "unknown"
+
+
+def _checkbox_key_for(selection_key: str) -> str:
+    return f"cb_{selection_key.replace(':', '_').replace('/', '_')[:40]}"
+
+
+def select_papers(rows: list[dict], max_total: int = MAX_SELECTIONS) -> tuple[int, bool]:
+    """Add the given paper rows to the selection, up to the global cap.
+
+    Returns (added_count, cap_reached). Also sets each checkbox's widget state
+    so the boxes reflect the new selection after a rerun.
+    """
+    init_selection_state()
+    added = 0
+    cap_reached = False
+    for row in rows:
+        if len(st.session_state.selected_papers) >= max_total:
+            cap_reached = True
+            break
+        key = selection_key_for_row(
+            str(row.get("pmid", "")), str(row.get("doi", "")), str(row.get("title", ""))
+        )
+        if key in st.session_state.selected_papers:
+            continue
+        st.session_state.selected_papers[key] = True
+        st.session_state[_checkbox_key_for(key)] = True
+        added += 1
+    return added, cap_reached
+
+
 def render_paper_checkbox(pmid: str, doi: str = "", title: str = "") -> bool:
     """Render checkbox for paper selection. Uses PMID/DOI as stable key.
 
-    Selections are capped at MAX_SELECTIONS; the 11th tick is reverted with a toast.
+    Selections are capped at MAX_SELECTIONS; an over-cap tick is reverted with a toast.
     """
     init_selection_state()
 
-    # Use PMID if available, fallback to DOI, fallback to title
-    if pmid and pmid.strip():
-        selection_key = pmid.strip()
-    elif doi and doi.strip():
-        selection_key = doi.strip()
-    elif title and title.strip():
-        selection_key = title.strip()[:100]
-    else:
-        selection_key = "unknown"
-
-    checkbox_key = f"cb_{selection_key.replace(':', '_').replace('/', '_')[:40]}"
+    selection_key = selection_key_for_row(pmid, doi, title)
+    checkbox_key = _checkbox_key_for(selection_key)
 
     # Seed widget state from the source of truth before the widget is created,
     # so we never set a widget value and pass `value=` at the same time.
