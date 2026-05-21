@@ -28,7 +28,6 @@ from pdf_ui import (
     init_selection_state,
     render_download_button,
     render_paper_checkbox,
-    render_paper_selection_list,
     show_pdf_settings,
 )
 
@@ -1042,9 +1041,6 @@ def main() -> None:
         st.subheader("📥 Download selected papers as ZIP")
         render_download_button(full_df, topic, email)
         st.divider()
-        st.subheader("📑 Select papers to add to download")
-        render_paper_selection_list(full_df, max_per_view=10)
-        st.divider()
         render_mode_sections(result, df, full_df)
 
     with tabs[1]:
@@ -1349,6 +1345,21 @@ def render_paper_table(
         with count_col:
             render_html(f'<div class="qf-section-caption">{len(table_df)} records</div>')
         filtered = table_df[table_df["tier"].isin(selected_tiers)] if selected_tiers else table_df
+
+    # Add selection checkboxes before the table
+    if not filtered.empty:
+        st.caption("☑️ Check to select papers for download")
+        for _, row in filtered.iterrows():
+            cb_col, title_col = st.columns([0.3, 6])
+            with cb_col:
+                render_paper_checkbox(
+                    str(row.get("pmid", "")),
+                    str(row.get("doi", "")),
+                    str(row.get("title", ""))
+                )
+            with title_col:
+                st.caption(str(row.get("title", "(untitled)"))[:100])
+        st.divider()
 
     rows_html: list[str] = []
     for row_idx, (_, row) in enumerate(filtered.iterrows()):
