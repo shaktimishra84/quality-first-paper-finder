@@ -173,17 +173,30 @@ def _check_pmc_oa_pmid(pmid: str) -> PDFSearchResult:
                             # The id value may already include the "PMC" prefix;
                             # strip it so we don't build a "PMCPMC..." URL.
                             pmcid_num = pmcid.upper().replace("PMC", "")
-                            pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmcid_num}/pdf/"
-                            source = PDFSource(
-                                url=pdf_url,
-                                source="PubMed Central OA",
-                                license="Public domain (PMC)",
-                                is_best_oa=True,
-                            )
+                            # Europe PMC's OA render endpoint returns the PDF
+                            # bytes programmatically and is far more reliable
+                            # than NCBI's /pdf/ page, which blocks server
+                            # downloads. Keep the NCBI URL as a fallback.
+                            sources = [
+                                PDFSource(
+                                    url=(
+                                        "https://europepmc.org/backend/ptpmcrender.fcgi"
+                                        f"?accid=PMC{pmcid_num}&blobtype=pdf"
+                                    ),
+                                    source="Europe PMC (OA render)",
+                                    license="Open access (PMC)",
+                                    is_best_oa=True,
+                                ),
+                                PDFSource(
+                                    url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmcid_num}/pdf/",
+                                    source="PubMed Central OA",
+                                    license="Public domain (PMC)",
+                                ),
+                            ]
                             return PDFSearchResult(
                                 has_pdf=True,
-                                sources=[source],
-                                best_source=source,
+                                sources=sources,
+                                best_source=sources[0],
                                 oa_status="gold",
                                 message="PMC OA PDF available",
                             )
@@ -229,6 +242,15 @@ def _check_europe_pmc_pmid(pmid: str) -> PDFSearchResult:
                 license_info = result.get("license", "unspecified")
 
                 pdf_urls = []
+                # Prefer the OA render endpoint built from the PMCID; Europe PMC
+                # often reports OA without a usable fullTextLink in search.
+                pmcid = result.get("pmcid", "")
+                if pmcid:
+                    pmcid_num = str(pmcid).upper().replace("PMC", "")
+                    pdf_urls.append(
+                        "https://europepmc.org/backend/ptpmcrender.fcgi"
+                        f"?accid=PMC{pmcid_num}&blobtype=pdf"
+                    )
                 if result.get("fullTextLink"):
                     pdf_urls.append(result["fullTextLink"])
                 if result.get("fullTextLinks"):
