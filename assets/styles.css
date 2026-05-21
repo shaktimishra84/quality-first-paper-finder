@@ -642,6 +642,25 @@ input:focus,
   overflow-x: auto;
 }
 
+.qf-th {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.qf-cell {
+  color: var(--ink-2);
+  font-size: 0.87rem;
+}
+
+.qf-row-sep {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  margin: 0.1rem 0 0.35rem;
+}
+
 .papers-table th {
   border-bottom: 1px solid var(--border-strong);
   color: var(--muted);

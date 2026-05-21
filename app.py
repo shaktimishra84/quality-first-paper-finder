@@ -1346,23 +1346,23 @@ def render_paper_table(
             render_html(f'<div class="qf-section-caption">{len(table_df)} records</div>')
         filtered = table_df[table_df["tier"].isin(selected_tiers)] if selected_tiers else table_df
 
-    # Add selection checkboxes before the table
-    if not filtered.empty:
-        st.caption("☑️ Check to select papers for download (up to 10 at a time)")
-        for _, row in filtered.iterrows():
-            cb_col, title_col = st.columns([0.3, 6])
-            with cb_col:
-                render_paper_checkbox(
-                    str(row.get("pmid", "")),
-                    str(row.get("doi", "")),
-                    str(row.get("title", ""))
-                )
-            with title_col:
-                st.caption(str(row.get("title", "(untitled)"))[:100])
-        st.divider()
+    if filtered.empty:
+        return
 
-    rows_html: list[str] = []
-    for row_idx, (_, row) in enumerate(filtered.iterrows()):
+    st.caption("☑️ Check papers to select them for download (up to 10 at a time)")
+
+    # Shared column ratios so the header and every row line up.
+    col_ratios = [0.5, 5.5, 1.3, 1.6, 0.8, 1.0, 1.3, 0.8]
+    header_cols = st.columns(col_ratios, vertical_alignment="bottom")
+    for header_col, header_label in zip(
+        header_cols,
+        ["", "Paper", "Tier", "Design", "Year", "Citations", "Score", "Link"],
+    ):
+        with header_col:
+            render_html(f'<div class="qf-th">{e(header_label)}</div>')
+    render_html('<hr class="qf-row-sep" />')
+
+    for _, row in filtered.iterrows():
         title = first_text(row.get("title"), "(untitled)")
         url = paper_url(row)
         pmid = short_text(row.get("pmid"), 24)
@@ -1392,45 +1392,36 @@ def render_paper_table(
         link = ""
         if url:
             link = f'<a class="paper-link" href="{e(url)}" target="_blank" rel="noopener noreferrer">Open</a>'
-        rows_html.append(
-            f"""
-            <tr>
-              <td>
-                <div class="table-title">{title_html}</div>
-                <div class="table-note">{journal_year}</div>
-                <div class="table-note">{e(short_text(note, 180))}</div>
-                <div class="pmid">{e("PMID " + pmid if pmid else "")}</div>
-              </td>
-              <td>{tier_badge(row.get("tier"))}</td>
-              <td>{e(short_text(first_text(row.get("study_design"), row.get("publication_type"), "Unclassified"), 54))}</td>
-              <td>{e(short_text(row.get("year"), 12))}</td>
-              <td>{e(citation_display)}</td>
-              <td>{score_mini(score_value(row))}</td>
-              <td>{link}</td>
-            </tr>
-            """
-        )
+        design_html = e(short_text(first_text(row.get("study_design"), row.get("publication_type"), "Unclassified"), 54))
+        year_html = e(short_text(row.get("year"), 12))
 
-    render_html(
-        f"""
-        <div class="table-wrap">
-          <table class="papers-table">
-            <thead>
-              <tr>
-                <th>Paper</th>
-                <th>Tier</th>
-                <th>Design</th>
-                <th>Year</th>
-                <th>Citations</th>
-                <th>Score</th>
-                <th>Link</th>
-              </tr>
-            </thead>
-            <tbody>{"".join(rows_html)}</tbody>
-          </table>
-        </div>
-        """
-    )
+        cols = st.columns(col_ratios, vertical_alignment="top")
+        with cols[0]:
+            render_paper_checkbox(
+                str(row.get("pmid", "")),
+                str(row.get("doi", "")),
+                str(row.get("title", "")),
+            )
+        with cols[1]:
+            render_html(
+                f'<div class="table-title">{title_html}</div>'
+                f'<div class="table-note">{journal_year}</div>'
+                f'<div class="table-note">{e(short_text(note, 180))}</div>'
+                f'<div class="pmid">{e("PMID " + pmid if pmid else "")}</div>'
+            )
+        with cols[2]:
+            render_html(f'<div class="qf-cell">{tier_badge(row.get("tier"))}</div>')
+        with cols[3]:
+            render_html(f'<div class="qf-cell">{design_html}</div>')
+        with cols[4]:
+            render_html(f'<div class="qf-cell">{year_html}</div>')
+        with cols[5]:
+            render_html(f'<div class="qf-cell">{e(citation_display)}</div>')
+        with cols[6]:
+            render_html(f'<div class="qf-cell">{score_mini(score_value(row))}</div>')
+        with cols[7]:
+            render_html(f'<div class="qf-cell">{link}</div>')
+        render_html('<hr class="qf-row-sep" />')
 
 
 
