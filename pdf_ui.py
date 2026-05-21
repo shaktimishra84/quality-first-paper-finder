@@ -152,80 +152,138 @@ def init_selection_state() -> None:
         st.session_state.selected_papers = {}
 
 
+def _resolve_selected_rows(df: pd.DataFrame, selection_keys: list[str]) -> list[dict]:
+    """Map selection keys (PMID, then DOI, then title) back to full paper rows."""
+    rows: list[dict] = []
+    for key in selection_keys:
+        matching = df[df["pmid"].astype(str) == key]
+        if matching.empty and "doi" in df:
+            matching = df[df["doi"].astype(str) == key]
+        if matching.empty:
+            matching = df[df["title"].astype(str) == key]
+        if not matching.empty:
+            rows.append(matching.iloc[0].to_dict())
+    return rows
+
+
 def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
-    """Render download selected papers as ZIP button."""
+    """Select papers, attempt to find their free PDFs, then download the ones found."""
     if df.empty:
         return
 
     init_selection_state()
+    selected_keys = list(st.session_state.selected_papers.keys())
+    selected_count = len(selected_keys)
 
     col1, col2, col3 = st.columns([2, 1, 1])
-
     with col1:
-        selected_count = len(st.session_state.selected_papers)
         st.metric(
             f"Papers selected (max {MAX_SELECTIONS})",
             selected_count,
             delta=f"out of {len(df)}",
         )
-
     with col2:
         if st.button("Clear selection", use_container_width=True):
             st.session_state.selected_papers = {}
-            # Also reset the individual checkbox widget states.
             for widget_key in [k for k in st.session_state if k.startswith("cb_")]:
                 del st.session_state[widget_key]
+            st.session_state.pop("pdf_attempt", None)
             st.rerun()
-
     with col3:
-        if selected_count > 0:
-            if st.button(
-                "📥 Download as ZIP",
-                key="download_zip_button",
-                use_container_width=True,
-                type="primary",
-            ):
-                with st.spinner(f"Preparing {selected_count} paper(s)..."):
-                    selected_papers = []
-                    for key in st.session_state.selected_papers.keys():
-                        # Try matching by PMID first (most common)
-                        matching_rows = df[df["pmid"].astype(str) == key]
+        find_clicked = st.button(
+            "🔍 Find free PDFs",
+            key="find_pdfs_button",
+            use_container_width=True,
+            type="primary",
+            disabled=selected_count == 0,
+        )
 
-                        # If no match by PMID, try DOI
-                        if matching_rows.empty:
-                            matching_rows = df[df["doi"].astype(str) == key]
+    if selected_count == 0:
+        st.caption("Tick papers in the list above (up to 10), then find their free PDFs.")
+        return
 
-                        # If no match by DOI, try title
-                        if matching_rows.empty:
-                            matching_rows = df[df["title"].astype(str) == key]
+    # Step 1: check each selected paper for a legal open-access PDF.
+    if find_clicked:
+        rows = _resolve_selected_rows(df, selected_keys)
+        attempt: list[dict] = []
+        progress = st.progress(0.0, text="Searching open-access sources…")
+        for index, paper in enumerate(rows, start=1):
+            result = find_legal_pdf(
+                pmid=str(paper.get("pmid", "")),
+                doi=str(paper.get("doi", "")),
+                email=email,
+            )
+            attempt.append(
+                {
+                    "title": str(paper.get("title", "(untitled)")),
+                    "has_pdf": result.has_pdf,
+                    "source": result.best_source.source
+                    if (result.has_pdf and result.best_source)
+                    else "",
+                }
+            )
+            progress.progress(index / max(len(rows), 1), text=f"Checked {index} of {len(rows)}…")
+        progress.empty()
+        st.session_state["pdf_attempt"] = {
+            "rows": rows,
+            "attempt": attempt,
+            "keys": list(selected_keys),
+        }
 
-                        if not matching_rows.empty:
-                            selected_papers.append(matching_rows.iloc[0].to_dict())
+    attempt_state = st.session_state.get("pdf_attempt")
+    if not attempt_state:
+        st.caption("Click **Find free PDFs** to check open-access availability for your selection.")
+        return
 
-                    try:
-                        zip_bytes, filename = generate_download_zip(
-                            selected_papers, topic, email
-                        )
+    if attempt_state.get("keys") != list(selected_keys):
+        st.caption("Selection changed since the last search — click **Find free PDFs** again.")
 
-                        st.download_button(
-                            label="⬇️ Click to download ZIP",
-                            data=zip_bytes,
-                            file_name=filename,
-                            mime="application/zip",
-                            key="download_zip_file",
-                        )
-
-                        st.success(
-                            f"✅ ZIP ready: {filename} ({len(zip_bytes) / 1024 / 1024:.1f} MB)"
-                        )
-                        st.caption(
-                            "Contains PDFs + metadata.csv + metadata.json"
-                        )
-
-                    except Exception as e:
-                        st.error(f"Error generating ZIP: {str(e)}")
+    # Step 2: show what the attempt found.
+    attempt = attempt_state["attempt"]
+    found = [item for item in attempt if item["has_pdf"]]
+    st.markdown(f"**Found {len(found)} free PDF(s)** out of {len(attempt)} selected paper(s).")
+    for item in attempt:
+        title = item["title"][:90]
+        if item["has_pdf"]:
+            st.markdown(f"✅ {title} — _{item['source']}_")
         else:
-            st.caption("Select papers to download")
+            st.markdown(f"⚪ {title} — no free open-access PDF")
+
+    if not found:
+        st.info(
+            "None of the selected papers have a free open-access PDF — they are likely "
+            "paywalled. Tip: add your email in the sidebar to enable Unpaywall, which "
+            "can find more open-access copies."
+        )
+        return
+
+    # Step 3: download only the PDFs that were actually retrieved.
+    if st.button(f"📥 Download {len(found)} PDF(s) as ZIP", key="build_zip_button", type="primary"):
+        with st.spinner("Fetching PDFs and building ZIP…"):
+            try:
+                zip_bytes, filename, packaged = generate_download_zip(
+                    attempt_state["rows"], topic, email
+                )
+            except Exception as exc:
+                st.error(f"Error building ZIP: {exc}")
+                return
+
+        if packaged > 0:
+            st.success(f"✅ {packaged} PDF(s) packaged — {len(zip_bytes) / 1024 / 1024:.1f} MB")
+            st.caption("Contains the PDFs + metadata.csv + metadata.json")
+            st.download_button(
+                label=f"⬇️ Save {filename}",
+                data=zip_bytes,
+                file_name=filename,
+                mime="application/zip",
+                key="download_zip_file",
+            )
+        else:
+            st.warning(
+                "The sources listed open-access PDFs, but none could be downloaded "
+                "automatically (some hosts block bots). Use each paper's **Open** link "
+                "to download it manually."
+            )
 
 
 def _on_paper_checkbox_change(checkbox_key: str, selection_key: str) -> None:

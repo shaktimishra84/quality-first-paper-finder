@@ -1037,11 +1037,10 @@ def main() -> None:
     )
 
     with tabs[0]:
-        st.divider()
-        st.subheader("📥 Download selected papers as ZIP")
-        render_download_button(full_df, topic, email)
-        st.divider()
         render_mode_sections(result, df, full_df)
+        st.divider()
+        st.subheader("📥 Find & download selected papers")
+        render_download_button(full_df, topic, email)
 
     with tabs[1]:
         render_evidence_review(result)

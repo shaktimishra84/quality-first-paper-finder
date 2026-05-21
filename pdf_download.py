@@ -15,10 +15,11 @@ def generate_download_zip(
     selected_papers: list[dict],
     topic: str,
     email: str = "",
-) -> tuple[bytes, str]:
+) -> tuple[bytes, str, int]:
     """
     Generate ZIP file with selected papers and metadata.
-    Returns (zip_bytes, filename).
+    Returns (zip_bytes, filename, pdfs_packaged) where pdfs_packaged is the
+    number of genuine PDFs actually written into the archive.
     """
     zip_buffer = io.BytesIO()
 
@@ -48,6 +49,14 @@ def generate_download_zip(
                 )
                 response.raise_for_status()
 
+                content = response.content
+                # Only keep genuine PDFs. Some OA hosts return an HTML
+                # interstitial or block automated access; those must not be
+                # written as ".pdf" or counted as a successful download.
+                content_type = response.headers.get("Content-Type", "").lower()
+                if not (content[:5] == b"%PDF-" or "application/pdf" in content_type):
+                    continue
+
                 # Safe filename
                 pdf_filename = _safe_filename(
                     pmid=pmid,
@@ -57,7 +66,7 @@ def generate_download_zip(
                 )
 
                 # Add PDF to ZIP
-                zip_file.writestr(pdf_filename, response.content)
+                zip_file.writestr(pdf_filename, content)
                 successful_downloads += 1
 
                 # Track metadata
@@ -104,7 +113,7 @@ def generate_download_zip(
 
     zip_buffer.seek(0)
     filename = f"corepapers_{topic.replace(' ', '_')}.zip"
-    return zip_buffer.getvalue(), filename
+    return zip_buffer.getvalue(), filename, successful_downloads
 
 
 def _safe_filename(

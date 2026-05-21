@@ -170,7 +170,10 @@ def _check_pmc_oa_pmid(pmid: str) -> PDFSearchResult:
                     if aid.get("idtype") == "pmcid":
                         pmcid = aid.get("value", "")
                         if pmcid:
-                            pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmcid}/pdf/"
+                            # The id value may already include the "PMC" prefix;
+                            # strip it so we don't build a "PMCPMC..." URL.
+                            pmcid_num = pmcid.upper().replace("PMC", "")
+                            pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmcid_num}/pdf/"
                             source = PDFSource(
                                 url=pdf_url,
                                 source="PubMed Central OA",
