@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urljoin
 
 import pandas as pd
 
@@ -19,18 +21,46 @@ BROWSER_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/pdf,application/octet-stream,*/*",
+    "Accept": "application/pdf,application/octet-stream,text/html,*/*",
 }
 
+# OA landing pages declare their real PDF via this meta tag (used by Google
+# Scholar). The two patterns cover either attribute order.
+_CITATION_PDF_PATTERNS = (
+    re.compile(
+        r'<meta[^>]+name=["\']citation_pdf_url["\'][^>]+content=["\']([^"\']+)["\']',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']citation_pdf_url["\']',
+        re.IGNORECASE,
+    ),
+)
 
-def _fetch_pdf_bytes(url: str) -> Optional[bytes]:
-    """Fetch a URL and return its bytes only if it is a genuine PDF."""
+
+def _looks_like_html(content: bytes, content_type: str) -> bool:
+    if "html" in content_type:
+        return True
+    head = content[:512].lstrip().lower()
+    return head.startswith(b"<!doctype html") or b"<html" in head
+
+
+def _fetch_pdf_bytes(url: str, referer: Optional[str] = None, _depth: int = 0) -> Optional[bytes]:
+    """Fetch a URL and return its bytes only if it is a genuine PDF.
+
+    If the URL returns an OA landing page, follow its declared
+    citation_pdf_url once to reach the actual PDF.
+    """
     import requests
+
+    headers = dict(BROWSER_HEADERS)
+    if referer:
+        headers["Referer"] = referer
 
     try:
         response = requests.get(
             url,
-            headers=BROWSER_HEADERS,
+            headers=headers,
             timeout=(5, 30),
             allow_redirects=True,
         )
@@ -42,6 +72,19 @@ def _fetch_pdf_bytes(url: str) -> Optional[bytes]:
     content_type = response.headers.get("Content-Type", "").lower()
     if content[:5] == b"%PDF-" or "application/pdf" in content_type:
         return content
+
+    # Landing page: follow the publisher-declared PDF link one level deep.
+    if _depth == 0 and _looks_like_html(content, content_type):
+        try:
+            html = response.text
+        except Exception:
+            return None
+        for pattern in _CITATION_PDF_PATTERNS:
+            match = pattern.search(html)
+            if match:
+                pdf_url = urljoin(response.url, match.group(1).strip())
+                if pdf_url and pdf_url != url:
+                    return _fetch_pdf_bytes(pdf_url, referer=response.url, _depth=1)
     return None
 
 
