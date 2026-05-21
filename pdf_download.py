@@ -148,7 +148,17 @@ def _safe_filename(
     """Generate safe filename for PDF."""
     import re
 
-    parts = []
+    # Inputs may arrive as ints/floats/NaN from the dataframe; coerce to str.
+    def _clean(value: object) -> str:
+        text = "" if value is None else str(value).strip()
+        return "" if text.lower() in ("nan", "none") else text
+
+    pmid = _clean(pmid)
+    doi = _clean(doi)
+    title = _clean(title)
+    year = _clean(year)
+
+    parts: list[str] = []
 
     if pmid:
         parts.append(f"PMID_{pmid}")
@@ -165,5 +175,5 @@ def _safe_filename(
     if year:
         parts.append(year)
 
-    filename = "_".join(filter(None, parts)) or "paper"
+    filename = "_".join(part for part in parts if part) or "paper"
     return f"{filename}.pdf"

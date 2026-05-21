@@ -1029,8 +1029,9 @@ def main() -> None:
 
     tabs = st.tabs(
         [
-            "Papers (Tier 1-2)",
-            "Background (Tier 3-4)",
+            "Tier 1 — Must-read",
+            "Tier 2 — Useful",
+            "Tier 3-4 — Background",
             "Evidence review",
             "Expected papers",
             "Knowledge summary",
@@ -1040,32 +1041,41 @@ def main() -> None:
     )
 
     with tabs[0]:
-        render_tier_groups(df, full_df, tiers=(1, 2), allow_select_all=True, show_context=True)
-        st.divider()
-        st.subheader("📥 Find & download selected papers")
-        render_download_button(full_df, topic, email)
+        render_tier_groups(
+            df, full_df, tiers=(1,), allow_select_all=True, show_context=True, use_expander=False
+        )
 
     with tabs[1]:
-        st.caption(
-            "Tier 3–4 are manual selection only. Papers you tick here are added to "
-            "your selection — find & download them from the **Papers (Tier 1-2)** tab."
+        render_tier_groups(
+            df, full_df, tiers=(2,), allow_select_all=True, use_expander=False
         )
-        render_tier_groups(df, full_df, tiers=(3, 4), allow_select_all=False, show_context=False)
 
     with tabs[2]:
-        render_evidence_review(result)
+        st.caption(
+            "Tier 3–4 are manual selection only. Papers you tick here are added to "
+            "the same selection and download from the bar below."
+        )
+        render_tier_groups(df, full_df, tiers=(3, 4), allow_select_all=False)
 
     with tabs[3]:
-        render_expected_papers(result)
+        render_evidence_review(result)
 
     with tabs[4]:
-        render_knowledge_summary(result["summary"])
+        render_expected_papers(result)
 
     with tabs[5]:
-        render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
+        render_knowledge_summary(result["summary"])
 
     with tabs[6]:
+        render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
+
+    with tabs[7]:
         render_exports(full_df, display_df)
+
+    # Global selection/download bar — visible regardless of the active tier tab.
+    st.divider()
+    st.subheader("📥 Find & download selected papers")
+    render_download_button(full_df, topic, email)
 
 
 def render_start_state() -> None:
@@ -1445,7 +1455,7 @@ TIER_TAB_LABELS = {
 TIER_DISPLAY_LIMIT = 200
 
 
-def render_tier_section(
+def _render_tier_body(
     tier_df: pd.DataFrame,
     full_df: pd.DataFrame,
     tier_num: int,
@@ -1453,46 +1463,62 @@ def render_tier_section(
 ) -> None:
     count = len(tier_df)
     label = TIER_TAB_LABELS.get(tier_num, f"Tier {tier_num}")
-    with st.expander(f"{label} ({count} papers)", expanded=tier_num <= 2):
-        if allow_select_all:
-            top_n = min(MAX_SELECTIONS, count)
-            action_col, hint_col = st.columns([1, 3])
-            with action_col:
-                if st.button(
-                    f"Select all (top {top_n})",
-                    key=f"selall_tier_{tier_num}",
-                    use_container_width=True,
-                ):
-                    added, cap_reached = select_papers(
-                        tier_df.head(MAX_SELECTIONS).to_dict("records")
-                    )
-                    message = (
-                        f"Added {added} Tier {tier_num} paper(s)."
-                        if added
-                        else "No new papers added."
-                    )
-                    if cap_reached:
-                        message += f" Selection cap of {MAX_SELECTIONS} reached."
-                    st.toast(message, icon="✅")
-                    st.rerun()
-            with hint_col:
-                st.caption(
-                    f"Selects the top {top_n} by rank (cap {MAX_SELECTIONS} total). "
-                    "Tick more below to add manually."
+    if allow_select_all:
+        top_n = min(MAX_SELECTIONS, count)
+        action_col, hint_col = st.columns([1, 3])
+        with action_col:
+            if st.button(
+                f"Select all (top {top_n})",
+                key=f"selall_tier_{tier_num}",
+                use_container_width=True,
+            ):
+                added, cap_reached = select_papers(
+                    tier_df.head(MAX_SELECTIONS).to_dict("records")
                 )
-        else:
-            st.caption("Manual selection only — tick the papers you want.")
+                message = (
+                    f"Added {added} Tier {tier_num} paper(s)."
+                    if added
+                    else "No new papers added."
+                )
+                if cap_reached:
+                    message += f" Selection cap of {MAX_SELECTIONS} reached."
+                st.toast(message, icon="✅")
+                st.rerun()
+        with hint_col:
+            st.caption(
+                f"Selects the top {top_n} by rank (cap {MAX_SELECTIONS} total). "
+                "Tick more below to add manually."
+            )
+    else:
+        st.caption("Manual selection only — tick the papers you want.")
 
-        display_df = tier_df.head(TIER_DISPLAY_LIMIT)
-        if count > TIER_DISPLAY_LIMIT:
-            st.caption(f"Showing the top {TIER_DISPLAY_LIMIT} of {count} by rank.")
-        render_paper_table(
-            display_df,
-            f"No {label} papers.",
-            full_df=full_df,
-            tier_filter=False,
-            key=f"tier_tbl_{tier_num}",
-        )
+    display_df = tier_df.head(TIER_DISPLAY_LIMIT)
+    if count > TIER_DISPLAY_LIMIT:
+        st.caption(f"Showing the top {TIER_DISPLAY_LIMIT} of {count} by rank.")
+    render_paper_table(
+        display_df,
+        f"No {label} papers.",
+        full_df=full_df,
+        tier_filter=False,
+        key=f"tier_tbl_{tier_num}",
+    )
+
+
+def render_tier_section(
+    tier_df: pd.DataFrame,
+    full_df: pd.DataFrame,
+    tier_num: int,
+    allow_select_all: bool,
+    use_expander: bool = True,
+) -> None:
+    count = len(tier_df)
+    label = TIER_TAB_LABELS.get(tier_num, f"Tier {tier_num}")
+    if use_expander:
+        with st.expander(f"{label} ({count} papers)", expanded=tier_num <= 2):
+            _render_tier_body(tier_df, full_df, tier_num, allow_select_all)
+    else:
+        render_html(f'<div class="section-kicker">{e(label)} · {count} papers</div>')
+        _render_tier_body(tier_df, full_df, tier_num, allow_select_all)
 
 
 def render_tier_groups(
@@ -1501,6 +1527,7 @@ def render_tier_groups(
     tiers: tuple[int, ...],
     allow_select_all: bool,
     show_context: bool = False,
+    use_expander: bool = True,
 ) -> None:
     if df.empty:
         st.warning("No papers were admitted.")
@@ -1517,7 +1544,9 @@ def render_tier_groups(
         if tier_df.empty:
             continue
         shown = True
-        render_tier_section(tier_df, full_df, tier_num, allow_select_all)
+        render_tier_section(
+            tier_df, full_df, tier_num, allow_select_all, use_expander=use_expander
+        )
 
     if not shown:
         st.info("No papers in these tiers for this search.")
