@@ -294,9 +294,11 @@ def render_paper_selection_list(df: pd.DataFrame, max_per_view: int = 10) -> Non
                 str(row.get("title", ""))
             )
         with title_col:
-            st.caption(short_text(row.get("title", "(untitled)"), 80))
+            title = str(row.get("title", "(untitled)"))[:80]
+            st.caption(title)
         with year_col:
-            st.caption(short_text(row.get("year", ""), 12))
+            year = str(row.get("year", ""))[:12]
+            st.caption(year)
         with tier_col:
             st.caption(row.get("tier", "—"))
 
