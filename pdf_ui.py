@@ -27,13 +27,9 @@ def get_download_folder() -> Path:
     return Path(path_str)
 
 
-def _resolve_secret_email() -> str:
-    """Resolve a contact email from secrets/env, matching the search path.
-
-    Checks ncbi_email, contact_email, then email (Streamlit secrets first,
-    then environment variables).
-    """
-    for name in ("ncbi_email", "contact_email", "email"):
+def _resolve_secret(*names: str) -> str:
+    """Resolve the first non-empty value from Streamlit secrets, then env."""
+    for name in names:
         try:
             value = str(st.secrets.get(name, "") or "").strip()
         except Exception:
@@ -43,6 +39,16 @@ def _resolve_secret_email() -> str:
         if value:
             return value
     return ""
+
+
+def _resolve_secret_email() -> str:
+    """Resolve a contact email from secrets/env, matching the search path."""
+    return _resolve_secret("ncbi_email", "contact_email", "email")
+
+
+def get_s2_api_key() -> str:
+    """Resolve the Semantic Scholar API key from secrets/env."""
+    return _resolve_secret("semantic_scholar_api_key", "s2_api_key")
 
 
 def get_ncbi_email() -> str:
@@ -191,6 +197,7 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
         return
 
     init_selection_state()
+    s2_api_key = get_s2_api_key()
     selected_keys = list(st.session_state.selected_papers.keys())
     selected_count = len(selected_keys)
 
@@ -231,6 +238,7 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
                 pmid=str(paper.get("pmid", "")),
                 doi=str(paper.get("doi", "")),
                 email=email,
+                s2_api_key=s2_api_key,
             )
             attempt.append(
                 {
@@ -287,7 +295,7 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
         with st.spinner("Fetching PDFs and building ZIP…"):
             try:
                 zip_bytes, filename, packaged = generate_download_zip(
-                    attempt_state["rows"], topic, email
+                    attempt_state["rows"], topic, email, s2_api_key=s2_api_key
                 )
             except Exception as exc:
                 st.error(f"Error building ZIP: {exc}")

@@ -49,6 +49,7 @@ def generate_download_zip(
     selected_papers: list[dict],
     topic: str,
     email: str = "",
+    s2_api_key: str = "",
 ) -> tuple[bytes, str, int]:
     """
     Generate ZIP file with selected papers and metadata.
@@ -66,7 +67,7 @@ def generate_download_zip(
             doi = str(paper.get("doi", ""))
 
             # Find PDF
-            result = find_legal_pdf(pmid=pmid, doi=doi, email=email)
+            result = find_legal_pdf(pmid=pmid, doi=doi, email=email, s2_api_key=s2_api_key)
 
             if not result.has_pdf or not result.best_source:
                 continue

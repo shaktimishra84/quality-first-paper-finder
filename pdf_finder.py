@@ -14,6 +14,7 @@ UNPAYWALL_API_URL = "https://api.unpaywall.org/v2"
 EUROPE_PMC_API_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest"
 PMC_API_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 OPENALEX_API_URL = "https://api.openalex.org/works"
+SEMANTIC_SCHOLAR_API_URL = "https://api.semanticscholar.org/graph/v1/paper"
 
 REQUEST_TIMEOUT = (5, 12)
 DEFAULT_HEADERS = {
@@ -336,7 +337,60 @@ def _check_openalex_doi(doi: str) -> PDFSearchResult:
         return PDFSearchResult(has_pdf=False, message=f"Unexpected error checking OpenAlex: {str(e)}")
 
 
-def find_legal_pdf(pmid: str = "", doi: str = "", email: str = "") -> PDFSearchResult:
+@functools.lru_cache(maxsize=256)
+def _check_semantic_scholar(pmid: str = "", doi: str = "", api_key: str = "") -> PDFSearchResult:
+    if doi:
+        paper_id = f"DOI:{_normalize_doi(doi)}"
+    elif pmid:
+        paper_id = f"PMID:{pmid.strip()}"
+    else:
+        return PDFSearchResult(has_pdf=False, message="No DOI or PMID provided")
+
+    headers = dict(DEFAULT_HEADERS)
+    if api_key:
+        headers["x-api-key"] = api_key.strip()
+
+    try:
+        response = requests.get(
+            f"{SEMANTIC_SCHOLAR_API_URL}/{paper_id}",
+            params={"fields": "openAccessPdf,isOpenAccess"},
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if isinstance(data, dict):
+            oa_pdf = data.get("openAccessPdf")
+            if isinstance(oa_pdf, dict):
+                pdf_url = oa_pdf.get("url", "")
+                if pdf_url:
+                    status = str(oa_pdf.get("status") or "green").lower()
+                    source = PDFSource(
+                        url=pdf_url,
+                        source="Semantic Scholar",
+                        license=str(oa_pdf.get("license") or "unspecified"),
+                        is_best_oa=True,
+                    )
+                    return PDFSearchResult(
+                        has_pdf=True,
+                        sources=[source],
+                        best_source=source,
+                        oa_status=status,
+                        message=f"OA PDF via Semantic Scholar ({status})",
+                    )
+
+        return PDFSearchResult(has_pdf=False, message="No OA PDF on Semantic Scholar")
+
+    except requests.exceptions.RequestException as e:
+        return PDFSearchResult(has_pdf=False, message=f"Semantic Scholar API error: {str(e)}")
+    except Exception as e:
+        return PDFSearchResult(has_pdf=False, message=f"Unexpected error checking Semantic Scholar: {str(e)}")
+
+
+def find_legal_pdf(
+    pmid: str = "", doi: str = "", email: str = "", s2_api_key: str = ""
+) -> PDFSearchResult:
     """
     Search for legal open-access PDFs.
     Tries sources in order of preference and returns best match.
@@ -375,6 +429,12 @@ def find_legal_pdf(pmid: str = "", doi: str = "", email: str = "") -> PDFSearchR
             best_result = europe_result
             sources_found.extend(europe_result.sources or [])
 
+    if (doi or pmid) and not best_result:
+        s2_result = _check_semantic_scholar(pmid=pmid, doi=doi, api_key=s2_api_key)
+        if s2_result.has_pdf:
+            best_result = s2_result
+            sources_found.extend(s2_result.sources or [])
+
     if doi and not best_result:
         openalex_result = _check_openalex_doi(doi)
         if openalex_result.has_pdf:
@@ -394,7 +454,7 @@ def find_legal_pdf(pmid: str = "", doi: str = "", email: str = "") -> PDFSearchR
         has_pdf=False,
         sources=[],
         oa_status=OA_STATUS_CLOSED,
-        message="No legal open-access PDF found in Unpaywall, PMC OA, Europe PMC, or OpenAlex",
+        message="No legal open-access PDF found in Unpaywall, PMC OA, Europe PMC, Semantic Scholar, or OpenAlex",
     )
 
 
