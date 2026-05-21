@@ -24,7 +24,12 @@ from paper_finder import (
     search_purpose_config,
     topic_profile,
 )
-from pdf_ui import show_pdf_settings, render_bulk_download, download_pdf_for_paper
+from pdf_ui import (
+    init_selection_state,
+    render_download_button,
+    render_paper_checkbox,
+    show_pdf_settings,
+)
 
 
 APP_NAME = "CorePapers"
@@ -1014,6 +1019,12 @@ def main() -> None:
             st.markdown(f"**{layer.name}** - {layer.purpose} Target: {layer.retmax} candidates.")
             st.code(layer.query, language="text")
 
+    # Initialize selection state for PDF downloads
+    init_selection_state()
+
+    # Get email for PDF downloads from sidebar
+    _, email = show_pdf_settings()
+
     tabs = st.tabs(
         [
             "Papers",
@@ -1021,12 +1032,15 @@ def main() -> None:
             "Expected papers",
             "Knowledge summary",
             "Gap map",
-            "PDF Download",
             "Exports",
         ]
     )
 
     with tabs[0]:
+        st.divider()
+        st.subheader("📥 Download selected papers as ZIP")
+        render_download_button(full_df, topic, email)
+        st.divider()
         render_mode_sections(result, df, full_df)
 
     with tabs[1]:
@@ -1042,9 +1056,6 @@ def main() -> None:
         render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
 
     with tabs[5]:
-        render_pdf_downloads(full_df, result, topic)
-
-    with tabs[6]:
         render_exports(full_df, display_df)
 
 

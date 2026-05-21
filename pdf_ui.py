@@ -6,6 +6,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
+from pdf_download import generate_download_zip
 from pdf_finder import find_legal_pdf, get_pdf_status_label, PDFSearchResult
 from pdf_storage import PDFMetadata, PDFStorage
 
@@ -142,122 +143,91 @@ def download_pdf_for_paper(
         return False, f"Error: {str(e)}"
 
 
-def render_paper_selection_and_download(
-    df: pd.DataFrame,
-    topic: str,
-    download_folder: Path,
-    email: str,
-) -> None:
-    """Render paper selection interface with targeted download."""
+def init_selection_state() -> None:
+    """Initialize session state for paper selection."""
+    if "selected_papers" not in st.session_state:
+        st.session_state.selected_papers = {}
+
+
+def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
+    """Render download selected papers as ZIP button."""
     if df.empty:
-        st.warning("No papers to download")
         return
 
-    st.subheader(f"Select papers to download ({len(df)} total)")
-    st.caption("Choose which papers to download. Start with a small batch to test.")
+    init_selection_state()
 
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
+
     with col1:
-        max_select = st.slider(
-            "Limit selection to top N papers",
-            min_value=1,
-            max_value=min(50, len(df)),
-            value=min(10, len(df)),
-            help="Start with a small batch (5-10) to avoid overload"
-        )
+        selected_count = len(st.session_state.selected_papers)
+        st.metric("Papers selected", selected_count, delta=f"out of {len(df)}")
+
     with col2:
-        st.metric("Selected", max_select)
+        if st.button("Clear selection", use_container_width=True):
+            st.session_state.selected_papers = {}
+            st.rerun()
 
-    filtered_df = df.head(max_select)
+    with col3:
+        if selected_count > 0:
+            if st.button(
+                "📥 Download as ZIP",
+                key="download_zip_button",
+                use_container_width=True,
+                type="primary",
+            ):
+                with st.spinner(f"Preparing {selected_count} paper(s)..."):
+                    selected_papers = [
+                        df.loc[idx].to_dict()
+                        for idx in st.session_state.selected_papers.keys()
+                        if idx in df.index
+                    ]
 
-    st.divider()
+                    try:
+                        zip_bytes, filename = generate_download_zip(
+                            selected_papers, topic, email
+                        )
 
-    selected_indices = []
-    cols = st.columns([0.5, 3, 1, 0.5])
+                        st.download_button(
+                            label="⬇️ Click to download ZIP",
+                            data=zip_bytes,
+                            file_name=filename,
+                            mime="application/zip",
+                            key="download_zip_file",
+                        )
 
-    for idx, (i, row) in enumerate(filtered_df.iterrows()):
-        with cols[0]:
-            selected = st.checkbox(
-                " ",
-                value=False,
-                key=f"paper_select_{row.get('pmid', idx)}"
-            )
-            if selected:
-                selected_indices.append(i)
+                        st.success(
+                            f"✅ ZIP ready: {filename} ({len(zip_bytes) / 1024 / 1024:.1f} MB)"
+                        )
+                        st.caption(
+                            "Contains PDFs + metadata.csv + metadata.json"
+                        )
 
-        with cols[1]:
-            title = row.get("title", "(untitled)")[:70]
-            year = row.get("year", "")
-            st.caption(f"{title}... ({year})")
+                    except Exception as e:
+                        st.error(f"Error generating ZIP: {str(e)}")
+        else:
+            st.caption("Select papers to download")
 
-        with cols[2]:
-            score = row.get("composite_score", row.get("score", "—"))
-            st.caption(f"Score: {score}")
 
-    if not selected_indices:
-        st.warning("Select papers above to download")
-        return
+def render_paper_checkbox(pmid: str, title: str, idx: int) -> bool:
+    """Render checkbox for paper selection."""
+    init_selection_state()
 
-    st.divider()
+    is_selected = idx in st.session_state.selected_papers
 
-    selected_df = df.loc[selected_indices]
+    checkbox_key = f"paper_select_{pmid or idx}"
+    checked = st.checkbox(
+        "Download",
+        value=is_selected,
+        key=checkbox_key,
+        label_visibility="collapsed",
+    )
 
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.info(f"📥 Ready to download {len(selected_df)} paper(s)")
-    with col2:
-        download_button = st.button(
-            "🔍 Find & Download PDFs",
-            key="download_selected",
-            use_container_width=True,
-            type="primary"
-        )
+    if checked and idx not in st.session_state.selected_papers:
+        st.session_state.selected_papers[idx] = True
+    elif not checked and idx in st.session_state.selected_papers:
+        del st.session_state.selected_papers[idx]
 
-    if download_button:
-        progress_bar = st.progress(0)
-        status_placeholder = st.empty()
-
-        results_list = []
-        successful = 0
-
-        for idx, (_, row) in enumerate(selected_df.iterrows()):
-            title_short = row.get("title", "(untitled)")[:50]
-            status_placeholder.text(f"⏳ {idx + 1}/{len(selected_df)}: {title_short}...")
-
-            success, message = download_pdf_for_paper(
-                row,
-                topic,
-                download_folder,
-                email,
-            )
-
-            results_list.append(
-                {
-                    "pmid": row.get("pmid", ""),
-                    "title": row.get("title", ""),
-                    "success": success,
-                    "message": message,
-                }
-            )
-
-            if success:
-                successful += 1
-
-            progress_bar.progress((idx + 1) / len(selected_df))
-
-        progress_bar.empty()
-        status_placeholder.empty()
-
-        st.success(f"✅ Downloaded {successful}/{len(selected_df)} papers")
-
-        with st.expander("Download Details"):
-            for result in results_list:
-                if result["success"]:
-                    st.success(f"✓ {result['pmid']}: {result['message']}")
-                else:
-                    st.warning(f"✗ {result['pmid']}: {result['message']}")
-
-        st.info(f"📁 Saved to: `{download_folder}`")
+    return checked
 
 
 def render_bulk_download(
@@ -266,8 +236,8 @@ def render_bulk_download(
     download_folder: Path,
     email: str,
 ) -> None:
-    """Render bulk download UI - delegates to selection interface."""
-    render_paper_selection_and_download(df, topic, download_folder, email)
+    """Legacy function - now handled in main results."""
+    pass
 
 
 def show_pdf_settings() -> tuple[Path, str]:
