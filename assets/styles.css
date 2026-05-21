@@ -655,6 +655,11 @@ input:focus,
   font-size: 0.87rem;
 }
 
+.qf-num {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+
 .qf-row-sep {
   border: 0;
   border-bottom: 1px solid var(--border);

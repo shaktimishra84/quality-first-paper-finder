@@ -274,8 +274,12 @@ def render_paper_checkbox(pmid: str, doi: str = "", title: str = "") -> bool:
     if checkbox_key not in st.session_state:
         st.session_state[checkbox_key] = selection_key in st.session_state.selected_papers
 
+    # Give each checkbox a meaningful accessible name (read by screen readers)
+    # while keeping it visually hidden, instead of a generic repeated "Select".
+    label = f"Select paper: {title.strip()[:80]}" if title and title.strip() else "Select paper"
+
     return st.checkbox(
-        "Select",
+        label,
         key=checkbox_key,
         label_visibility="collapsed",
         on_change=_on_paper_checkbox_change,

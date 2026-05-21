@@ -1414,9 +1414,9 @@ def render_paper_table(
         with cols[3]:
             render_html(f'<div class="qf-cell">{design_html}</div>')
         with cols[4]:
-            render_html(f'<div class="qf-cell">{year_html}</div>')
+            render_html(f'<div class="qf-cell qf-num">{year_html}</div>')
         with cols[5]:
-            render_html(f'<div class="qf-cell">{e(citation_display)}</div>')
+            render_html(f'<div class="qf-cell qf-num">{e(citation_display)}</div>')
         with cols[6]:
             render_html(f'<div class="qf-cell">{score_mini(score_value(row))}</div>')
         with cols[7]:
