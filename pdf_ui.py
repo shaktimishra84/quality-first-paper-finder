@@ -176,11 +176,21 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
                 type="primary",
             ):
                 with st.spinner(f"Preparing {selected_count} paper(s)..."):
-                    selected_papers = [
-                        df.loc[idx].to_dict()
-                        for idx in st.session_state.selected_papers.keys()
-                        if idx in df.index
-                    ]
+                    selected_papers = []
+                    for key in st.session_state.selected_papers.keys():
+                        matching_rows = None
+                        if key.startswith("pmid:"):
+                            pmid = key.replace("pmid:", "")
+                            matching_rows = df[df["pmid"].astype(str) == pmid]
+                        elif key.startswith("doi:"):
+                            doi = key.replace("doi:", "")
+                            matching_rows = df[df["doi"].astype(str) == doi]
+                        elif key.startswith("title:"):
+                            title = key.replace("title:", "")
+                            matching_rows = df[df["title"].astype(str) == title]
+
+                        if matching_rows is not None and not matching_rows.empty:
+                            selected_papers.append(matching_rows.iloc[0].to_dict())
 
                     try:
                         zip_bytes, filename = generate_download_zip(
@@ -208,13 +218,23 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
             st.caption("Select papers to download")
 
 
-def render_paper_checkbox(pmid: str, title: str, idx: int) -> bool:
-    """Render checkbox for paper selection."""
+def render_paper_checkbox(pmid: str, doi: str = "", title: str = "", idx: int | None = None) -> bool:
+    """Render checkbox for paper selection. Uses PMID/DOI as stable key."""
     init_selection_state()
 
-    is_selected = idx in st.session_state.selected_papers
+    # Use PMID if available, fallback to DOI, fallback to title
+    if pmid and pmid.strip():
+        selection_key = f"pmid:{pmid.strip()}"
+    elif doi and doi.strip():
+        selection_key = f"doi:{doi.strip()}"
+    elif title and title.strip():
+        selection_key = f"title:{title.strip()[:100]}"
+    else:
+        selection_key = f"idx:{idx}" if idx is not None else "unknown"
 
-    checkbox_key = f"paper_select_{pmid or idx}"
+    is_selected = selection_key in st.session_state.selected_papers
+
+    checkbox_key = f"paper_select_{selection_key.replace(':', '_')}"
     checked = st.checkbox(
         "Download",
         value=is_selected,
@@ -222,10 +242,10 @@ def render_paper_checkbox(pmid: str, title: str, idx: int) -> bool:
         label_visibility="collapsed",
     )
 
-    if checked and idx not in st.session_state.selected_papers:
-        st.session_state.selected_papers[idx] = True
-    elif not checked and idx in st.session_state.selected_papers:
-        del st.session_state.selected_papers[idx]
+    if checked and selection_key not in st.session_state.selected_papers:
+        st.session_state.selected_papers[selection_key] = True
+    elif not checked and selection_key in st.session_state.selected_papers:
+        del st.session_state.selected_papers[selection_key]
 
     return checked
 

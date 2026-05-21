@@ -1332,6 +1332,8 @@ def render_paper_table(
         st.warning(empty_message)
         return
 
+    init_selection_state()
+
     filtered = table_df
     if tier_filter and "tier" in table_df:
         tier_options = list(dict.fromkeys(table_df["tier"].dropna().tolist()))
@@ -1345,9 +1347,11 @@ def render_paper_table(
         filtered = table_df[table_df["tier"].isin(selected_tiers)] if selected_tiers else table_df
 
     rows_html: list[str] = []
-    for _, row in filtered.iterrows():
+    for row_idx, (_, row) in enumerate(filtered.iterrows()):
         title = first_text(row.get("title"), "(untitled)")
         url = paper_url(row)
+        pmid = short_text(row.get("pmid"), 24)
+
         title_html = e(title)
         if url:
             title_html = f'<a class="paper-link" href="{e(url)}" target="_blank" rel="noopener noreferrer">{e(title)}</a>'
@@ -1370,7 +1374,6 @@ def render_paper_table(
         citation_display = "NA"
         if citation_value is not None and not pd.isna(citation_value):
             citation_display = fmt_int(citation_value)
-        pmid = short_text(row.get("pmid"), 24)
         link = ""
         if url:
             link = f'<a class="paper-link" href="{e(url)}" target="_blank" rel="noopener noreferrer">Open</a>'
@@ -1414,6 +1417,26 @@ def render_paper_table(
         """
     )
 
+    st.divider()
+    st.caption("Select papers above to download as ZIP")
+    cb_cols = st.columns([1, 2, 1, 1, 1])
+    for row_idx, (_, row) in enumerate(filtered.iterrows()):
+        with cb_cols[0]:
+            render_paper_checkbox(
+                str(row.get("pmid", "")),
+                str(row.get("doi", "")),
+                str(row.get("title", "")),
+                row_idx
+            )
+        with cb_cols[1]:
+            st.caption(short_text(row.get("title", "(untitled)"), 80))
+        with cb_cols[2]:
+            st.caption(short_text(row.get("year", ""), 12))
+        with cb_cols[3]:
+            st.caption(row.get("tier", "—"))
+        with cb_cols[4]:
+            st.caption(short_text(row.get("journal", ""), 40))
+
 
 def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) -> None:
     if df.empty:
@@ -1455,6 +1478,9 @@ def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
     cards_df = top_learning_rows(full_df, limit) if is_learning_result(full_df) else full_df.head(limit)
     if cards_df.empty:
         return
+
+    init_selection_state()
+
     heading = "Top learning papers" if is_learning_result(full_df) else "Top ranked papers"
     render_html(f'<div class="section-kicker">{e(heading)}</div>')
     cards: list[str] = []
@@ -1495,6 +1521,26 @@ def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
             """
         )
     render_html(f'<div class="top-papers">{"".join(cards)}</div>')
+
+    st.divider()
+    st.caption("Select papers above to download as ZIP")
+    cb_cols = st.columns([1, 2, 1, 1, 1])
+    for rank, (_, row) in enumerate(cards_df.iterrows(), start=0):
+        with cb_cols[0]:
+            render_paper_checkbox(
+                str(row.get("pmid", "")),
+                str(row.get("doi", "")),
+                str(row.get("title", "")),
+                rank
+            )
+        with cb_cols[1]:
+            st.caption(short_text(row.get("title", "(untitled)"), 80))
+        with cb_cols[2]:
+            st.caption(short_text(row.get("year", ""), 12))
+        with cb_cols[3]:
+            st.caption(row.get("tier", "—"))
+        with cb_cols[4]:
+            st.caption(short_text(row.get("journal", ""), 40))
 
 
 def is_learning_result(df: pd.DataFrame) -> bool:
