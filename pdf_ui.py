@@ -10,6 +10,9 @@ from pdf_download import generate_download_zip
 from pdf_finder import find_legal_pdf, get_pdf_status_label, PDFSearchResult
 from pdf_storage import PDFMetadata, PDFStorage
 
+# Maximum number of papers a user may select for download at once.
+MAX_SELECTIONS = 10
+
 
 def get_download_folder() -> Path:
     """Get download folder from sidebar, create if needed."""
@@ -160,11 +163,18 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
 
     with col1:
         selected_count = len(st.session_state.selected_papers)
-        st.metric("Papers selected", selected_count, delta=f"out of {len(df)}")
+        st.metric(
+            f"Papers selected (max {MAX_SELECTIONS})",
+            selected_count,
+            delta=f"out of {len(df)}",
+        )
 
     with col2:
         if st.button("Clear selection", use_container_width=True):
             st.session_state.selected_papers = {}
+            # Also reset the individual checkbox widget states.
+            for widget_key in [k for k in st.session_state if k.startswith("cb_")]:
+                del st.session_state[widget_key]
             st.rerun()
 
     with col3:
@@ -218,8 +228,33 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
             st.caption("Select papers to download")
 
 
+def _on_paper_checkbox_change(checkbox_key: str, selection_key: str) -> None:
+    """Sync a checkbox toggle into selected_papers, enforcing MAX_SELECTIONS."""
+    init_selection_state()
+    checked = st.session_state.get(checkbox_key, False)
+
+    if checked:
+        if selection_key in st.session_state.selected_papers:
+            return
+        if len(st.session_state.selected_papers) >= MAX_SELECTIONS:
+            # Cap reached: undo this tick and tell the user.
+            st.session_state[checkbox_key] = False
+            st.toast(
+                f"You can select up to {MAX_SELECTIONS} papers at a time. "
+                "Uncheck one before adding another.",
+                icon="⚠️",
+            )
+            return
+        st.session_state.selected_papers[selection_key] = True
+    else:
+        st.session_state.selected_papers.pop(selection_key, None)
+
+
 def render_paper_checkbox(pmid: str, doi: str = "", title: str = "") -> bool:
-    """Render checkbox for paper selection. Uses PMID/DOI as stable key."""
+    """Render checkbox for paper selection. Uses PMID/DOI as stable key.
+
+    Selections are capped at MAX_SELECTIONS; the 11th tick is reverted with a toast.
+    """
     init_selection_state()
 
     # Use PMID if available, fallback to DOI, fallback to title
@@ -232,22 +267,20 @@ def render_paper_checkbox(pmid: str, doi: str = "", title: str = "") -> bool:
     else:
         selection_key = "unknown"
 
-    is_selected = selection_key in st.session_state.selected_papers
-
     checkbox_key = f"cb_{selection_key.replace(':', '_').replace('/', '_')[:40]}"
-    checked = st.checkbox(
+
+    # Seed widget state from the source of truth before the widget is created,
+    # so we never set a widget value and pass `value=` at the same time.
+    if checkbox_key not in st.session_state:
+        st.session_state[checkbox_key] = selection_key in st.session_state.selected_papers
+
+    return st.checkbox(
         "Select",
-        value=is_selected,
         key=checkbox_key,
         label_visibility="collapsed",
+        on_change=_on_paper_checkbox_change,
+        args=(checkbox_key, selection_key),
     )
-
-    if checked and selection_key not in st.session_state.selected_papers:
-        st.session_state.selected_papers[selection_key] = True
-    elif not checked and selection_key in st.session_state.selected_papers:
-        del st.session_state.selected_papers[selection_key]
-
-    return checked
 
 
 def render_paper_selection_list(df: pd.DataFrame, max_per_view: int = 10) -> None:

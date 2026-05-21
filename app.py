@@ -1348,7 +1348,7 @@ def render_paper_table(
 
     # Add selection checkboxes before the table
     if not filtered.empty:
-        st.caption("☑️ Check to select papers for download")
+        st.caption("☑️ Check to select papers for download (up to 10 at a time)")
         for _, row in filtered.iterrows():
             cb_col, title_col = st.columns([0.3, 6])
             with cb_col:
