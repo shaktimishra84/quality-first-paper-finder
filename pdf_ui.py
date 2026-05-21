@@ -178,18 +178,18 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
                 with st.spinner(f"Preparing {selected_count} paper(s)..."):
                     selected_papers = []
                     for key in st.session_state.selected_papers.keys():
-                        matching_rows = None
-                        if key.startswith("pmid:"):
-                            pmid = key.replace("pmid:", "")
-                            matching_rows = df[df["pmid"].astype(str) == pmid]
-                        elif key.startswith("doi:"):
-                            doi = key.replace("doi:", "")
-                            matching_rows = df[df["doi"].astype(str) == doi]
-                        elif key.startswith("title:"):
-                            title = key.replace("title:", "")
-                            matching_rows = df[df["title"].astype(str) == title]
+                        # Try matching by PMID first (most common)
+                        matching_rows = df[df["pmid"].astype(str) == key]
 
-                        if matching_rows is not None and not matching_rows.empty:
+                        # If no match by PMID, try DOI
+                        if matching_rows.empty:
+                            matching_rows = df[df["doi"].astype(str) == key]
+
+                        # If no match by DOI, try title
+                        if matching_rows.empty:
+                            matching_rows = df[df["title"].astype(str) == key]
+
+                        if not matching_rows.empty:
                             selected_papers.append(matching_rows.iloc[0].to_dict())
 
                     try:
@@ -218,26 +218,25 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
             st.caption("Select papers to download")
 
 
-def render_paper_checkbox(pmid: str, doi: str = "", title: str = "", idx: int | None = None, section_key: str = "") -> bool:
+def render_paper_checkbox(pmid: str, doi: str = "", title: str = "") -> bool:
     """Render checkbox for paper selection. Uses PMID/DOI as stable key."""
     init_selection_state()
 
     # Use PMID if available, fallback to DOI, fallback to title
     if pmid and pmid.strip():
-        selection_key = f"pmid:{pmid.strip()}"
+        selection_key = pmid.strip()
     elif doi and doi.strip():
-        selection_key = f"doi:{doi.strip()}"
+        selection_key = doi.strip()
     elif title and title.strip():
-        selection_key = f"title:{title.strip()[:100]}"
+        selection_key = title.strip()[:100]
     else:
-        selection_key = f"idx:{idx}" if idx is not None else "unknown"
+        selection_key = "unknown"
 
     is_selected = selection_key in st.session_state.selected_papers
 
-    # Make checkbox key unique per section to avoid duplicate key errors
-    checkbox_key = f"paper_select_{section_key}_{selection_key.replace(':', '_')}" if section_key else f"paper_select_{selection_key.replace(':', '_')}"
+    checkbox_key = f"cb_{selection_key.replace(':', '_').replace('/', '_')[:40]}"
     checked = st.checkbox(
-        "Download",
+        "Select",
         value=is_selected,
         key=checkbox_key,
         label_visibility="collapsed",
@@ -249,6 +248,57 @@ def render_paper_checkbox(pmid: str, doi: str = "", title: str = "", idx: int | 
         del st.session_state.selected_papers[selection_key]
 
     return checked
+
+
+def render_paper_selection_list(df: pd.DataFrame, max_per_view: int = 10) -> None:
+    """Render paginated checkbox list for all papers in a dataframe."""
+    if df.empty:
+        return
+
+    init_selection_state()
+
+    st.caption(f"📋 Select papers to download ({len(st.session_state.selected_papers)} selected)")
+
+    # Pagination
+    total_papers = len(df)
+    total_pages = (total_papers + max_per_view - 1) // max_per_view
+
+    if "paper_selection_page" not in st.session_state:
+        st.session_state.paper_selection_page = 0
+
+    page_col, page_info = st.columns([1, 2])
+    with page_col:
+        st.session_state.paper_selection_page = st.number_input(
+            "Page",
+            min_value=0,
+            max_value=total_pages - 1,
+            value=st.session_state.paper_selection_page,
+            key="paper_page_input"
+        )
+    with page_info:
+        st.caption(f"Page {st.session_state.paper_selection_page + 1} of {total_pages}")
+
+    # Get papers for current page
+    start_idx = st.session_state.paper_selection_page * max_per_view
+    end_idx = min(start_idx + max_per_view, total_papers)
+    page_df = df.iloc[start_idx:end_idx]
+
+    # Render checkboxes for papers on this page
+    for _, row in page_df.iterrows():
+        cb_col, title_col, year_col, tier_col = st.columns([0.5, 3, 0.8, 1])
+
+        with cb_col:
+            render_paper_checkbox(
+                str(row.get("pmid", "")),
+                str(row.get("doi", "")),
+                str(row.get("title", ""))
+            )
+        with title_col:
+            st.caption(short_text(row.get("title", "(untitled)"), 80))
+        with year_col:
+            st.caption(short_text(row.get("year", ""), 12))
+        with tier_col:
+            st.caption(row.get("tier", "—"))
 
 
 def render_bulk_download(

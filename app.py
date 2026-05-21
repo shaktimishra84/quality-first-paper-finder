@@ -28,6 +28,7 @@ from pdf_ui import (
     init_selection_state,
     render_download_button,
     render_paper_checkbox,
+    render_paper_selection_list,
     show_pdf_settings,
 )
 
@@ -1041,6 +1042,9 @@ def main() -> None:
         st.subheader("📥 Download selected papers as ZIP")
         render_download_button(full_df, topic, email)
         st.divider()
+        st.subheader("📑 Select papers to add to download")
+        render_paper_selection_list(full_df, max_per_view=10)
+        st.divider()
         render_mode_sections(result, df, full_df)
 
     with tabs[1]:
@@ -1417,26 +1421,6 @@ def render_paper_table(
         """
     )
 
-    st.divider()
-    st.caption("Select papers above to download as ZIP")
-    for row_idx, (_, row) in enumerate(filtered.iterrows()):
-        cb_cols = st.columns([0.5, 3, 1, 1.2, 1.5])
-        with cb_cols[0]:
-            render_paper_checkbox(
-                str(row.get("pmid", "")),
-                str(row.get("doi", "")),
-                str(row.get("title", "")),
-                row_idx,
-                section_key=key
-            )
-        with cb_cols[1]:
-            st.caption(short_text(row.get("title", "(untitled)"), 80))
-        with cb_cols[2]:
-            st.caption(short_text(row.get("year", ""), 12))
-        with cb_cols[3]:
-            st.caption(row.get("tier", "—"))
-        with cb_cols[4]:
-            st.caption(short_text(row.get("journal", ""), 40))
 
 
 def render_mode_sections(result: dict, df: pd.DataFrame, full_df: pd.DataFrame) -> None:
@@ -1523,26 +1507,6 @@ def render_top_paper_cards(full_df: pd.DataFrame, limit: int = 3) -> None:
         )
     render_html(f'<div class="top-papers">{"".join(cards)}</div>')
 
-    st.divider()
-    st.caption("Select papers above to download as ZIP")
-    for rank, (_, row) in enumerate(cards_df.iterrows(), start=0):
-        cb_cols = st.columns([0.5, 3, 1, 1.2, 1.5])
-        with cb_cols[0]:
-            render_paper_checkbox(
-                str(row.get("pmid", "")),
-                str(row.get("doi", "")),
-                str(row.get("title", "")),
-                rank,
-                section_key="top_papers"
-            )
-        with cb_cols[1]:
-            st.caption(short_text(row.get("title", "(untitled)"), 80))
-        with cb_cols[2]:
-            st.caption(short_text(row.get("year", ""), 12))
-        with cb_cols[3]:
-            st.caption(row.get("tier", "—"))
-        with cb_cols[4]:
-            st.caption(short_text(row.get("journal", ""), 40))
 
 
 def is_learning_result(df: pd.DataFrame) -> bool:
