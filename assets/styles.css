@@ -339,6 +339,37 @@ input:focus,
   margin-top: 0.8rem;
 }
 
+.qf-tier-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.6rem;
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px dashed var(--soft-border, #CBD5E1);
+  font-size: 0.82rem;
+  color: var(--muted, #64748B);
+}
+
+.qf-tier-legend-label {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-soft, #334155);
+  margin-right: 0.15rem;
+}
+
+.qf-tier-legend-desc {
+  margin-right: 0.35rem;
+  color: var(--muted, #64748B);
+}
+
+@media (max-width: 640px) {
+  .qf-tier-legend {
+    font-size: 0.78rem;
+    gap: 0.3rem 0.45rem;
+  }
+}
+
 .chip,
 .qf-chip {
   align-items: center;

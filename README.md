@@ -14,7 +14,7 @@ Use `https://shaktimishra84.github.io/quality-first-paper-finder/share-20260512.
 - Uses a mandatory expected-paper sanity layer for topics with known sentinel papers, starting with cerebral venous thrombosis.
 - Runs an API discovery supervisor before scoring: PubMed, Europe PMC, Crossref, OpenAlex, Semantic Scholar, Unpaywall, ClinicalTrials.gov, medRxiv/bioRxiv, and optional PubMed related-article expansion.
 - Builds a medical evidence review artifact with source IDs, evidence hierarchy, source comparison, citation verification caveats, gaps, and limitations.
-- Uses researcher-facing search modes instead of technical depth knobs: Learning mode, Research mode, Deep search mode, and Rare / case mode. Deep search and Rare / case modes keep all relevant publication types visible, including editorials, correspondence, letters, comments, case reports, and case series.
+- Uses researcher-facing search modes instead of technical depth knobs: Learning mode, Research mode, Deep search mode, and Rare / case mode. Learning mode is narrative-review first and keeps meta-analyses as secondary synthesis; Deep search and Rare / case modes keep all relevant publication types visible, including editorials, correspondence, letters, comments, case reports, and case series.
 - Admits only papers with a verifiable PMID, DOI, PubMed link, OpenAlex record, or Semantic Scholar record.
 - Enriches accepted records with OpenAlex citation counts and optional Semantic Scholar cross-checks.
 - Lets citation enrichment scale up to the retrieved candidate set while keeping it optional.
@@ -45,6 +45,16 @@ http://localhost:8512
 ```
 
 The app needs outbound network access to PubMed and the discovery/enrichment APIs. If it is run inside a network-blocked sandbox, it will show source errors and will not admit papers. Unpaywall title search uses an email from app secrets when one is configured.
+
+Optional private API keys can be supplied through Streamlit secrets or matching environment variables:
+
+```toml
+ncbi_email = "you@example.com"
+ncbi_api_key = "..."
+semantic_scholar_api_key = "..."
+```
+
+Semantic Scholar requests send the key as `x-api-key` and are throttled to stay below the approved 1 request/second limit.
 
 ## Safety rules implemented
 

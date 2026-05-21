@@ -8,6 +8,8 @@ from paper_finder import (
     api_supervisor_semantic_scholar_queries,
     api_supervisor_unpaywall_queries,
     resolve_dois_to_pubmed_pmids,
+    search_semantic_scholar_identifiers,
+    semantic_scholar_headers,
 )
 
 
@@ -43,3 +45,36 @@ def test_doi_resolution_uses_pubmed_article_identifier_search(monkeypatch) -> No
 
     assert pmids == ["12345678"]
     assert captured_queries == ['"10.1000/test"[AID]']
+
+
+def test_semantic_scholar_api_key_is_sent_as_header(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "externalIds": {
+                            "PubMed": "12345678",
+                            "DOI": "10.1000/test",
+                        }
+                    }
+                ]
+            }
+
+    def fake_get(url: str, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers", {})
+        return FakeResponse()
+
+    monkeypatch.setattr("paper_finder.requests.get", fake_get)
+    monkeypatch.setattr("paper_finder.throttle_semantic_scholar", lambda api_key="": None)
+
+    search_semantic_scholar_identifiers("unique header test", limit=1, api_key="s2k-test")
+
+    assert semantic_scholar_headers("s2k-test")["x-api-key"] == "s2k-test"
+    assert captured["headers"]["x-api-key"] == "s2k-test"

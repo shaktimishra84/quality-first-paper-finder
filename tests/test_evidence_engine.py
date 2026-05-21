@@ -7,9 +7,12 @@ from paper_finder import (
     SEARCH_PURPOSE_RARE,
     SEARCH_PURPOSE_RESEARCH,
     SearchContext,
+    build_search_layers,
     classify_topic_match,
+    expand_acronyms,
     score_and_classify_paper,
     search_purpose_config,
+    user_intent_terms,
 )
 
 
@@ -136,8 +139,129 @@ def test_same_review_ranks_higher_for_knowledge_than_research() -> None:
 
     assert knowledge["tier"] in {"Tier 1: Must-read", "Tier 2: Useful supporting"}
     assert research["tier"] == "Tier 3: Background"
-    assert knowledge["reading_section"] == "Best review articles"
+    assert knowledge["reading_section"] == "Best narrative reviews"
     assert research["reading_section"] == "Background reviews"
+
+
+def test_learning_mode_prioritizes_narrative_reviews_over_meta_analysis() -> None:
+    narrative_paper = {
+        "title": "Cerebral venous thrombosis: a narrative review",
+        "abstract": "Cerebral venous thrombosis review for broad clinical learning.",
+        "publication_types": ["Review"],
+        "journal": "Neurology Review",
+        "pmid": "111",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/111/",
+        "citation_count": 80,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    meta_paper = {
+        "title": "Cerebral venous thrombosis: a systematic review and meta-analysis",
+        "abstract": "Cerebral venous thrombosis evidence synthesis and pooled outcomes.",
+        "publication_types": ["Systematic Review", "Meta-Analysis"],
+        "journal": "Stroke",
+        "pmid": "222",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/222/",
+        "citation_count": 200,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    context = SearchContext(
+        topic="cerebral venous thrombosis",
+        search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+    )
+
+    narrative = score_and_classify_paper(narrative_paper, context, {})
+    meta = score_and_classify_paper(meta_paper, context, {})
+
+    assert narrative["purpose_fit_score"] > meta["purpose_fit_score"]
+    assert narrative["reading_section"] == "Best narrative reviews"
+    assert meta["reading_section"] == "Evidence synthesis"
+    assert meta["tier"] == "Tier 3: Background"
+    assert meta["total_score"] <= 59
+
+
+def test_profile_topic_search_layers_preserve_user_intent_modifiers() -> None:
+    context = SearchContext(
+        topic="cerebral venous thrombosis anticoagulation recurrence",
+        search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+    )
+
+    layers = build_search_layers(context, candidate_depth=30)
+    intent_layer = next(layer for layer in layers if layer.name == "Intent-focused review")
+    focused_layer = next(layer for layer in layers if layer.name == "Focused")
+
+    assert user_intent_terms(context) == ["anticoagulation", "recurrence"]
+    assert "anticoagulation" in intent_layer.query
+    assert "recurrence" in intent_layer.query
+    assert "anticoagulation" in focused_layer.query
+    assert "recurrence" in focused_layer.query
+
+
+def test_requested_intent_modifiers_downrank_generic_profile_matches() -> None:
+    context = SearchContext(
+        topic="cerebral venous thrombosis anticoagulation recurrence",
+        search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+    )
+    generic = {
+        "title": "Cerebral venous thrombosis: a narrative review",
+        "abstract": "Cerebral venous thrombosis diagnosis and clinical presentation are reviewed.",
+        "publication_types": ["Review"],
+        "journal": "Stroke",
+        "pmid": "111",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/111/",
+        "citation_count": 300,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    focused = {
+        "title": "Cerebral venous thrombosis anticoagulation and recurrence: a narrative review",
+        "abstract": "Cerebral venous thrombosis anticoagulation duration and recurrence risk are reviewed.",
+        "publication_types": ["Review"],
+        "journal": "Stroke",
+        "pmid": "222",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/222/",
+        "citation_count": 80,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+
+    generic_scored = score_and_classify_paper(generic, context, {})
+    focused_scored = score_and_classify_paper(focused, context, {})
+
+    assert "Does not match requested modifiers" in "; ".join(generic_scored["penalty_notes"])
+    assert generic_scored["tier"] == "Tier 3: Background"
+    assert focused_scored["intent_match_score"] == 6
+    assert focused_scored["total_score"] > generic_scored["total_score"]
+
+
+def test_learning_mode_demotes_veterinary_systematic_reviews() -> None:
+    paper = {
+        "title": "Acute Respiratory Distress Syndrome in Veterinary Medicine-The ARDSVet Definitions.",
+        "abstract": "Veterinary medicine consensus definitions for acute respiratory distress syndrome in dogs and cats.",
+        "publication_types": ["Consensus Statement", "Journal Article", "Systematic Review"],
+        "journal": "Journal of veterinary emergency and critical care",
+        "pmid": "40838381",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/40838381/",
+        "citation_count": 5,
+        "citation_source": "OpenAlex",
+        "year": 2025,
+    }
+
+    result = score_and_classify_paper(
+        paper,
+        SearchContext(
+            topic="acute respiratory distress syndrome",
+            search_purpose=SEARCH_PURPOSE_KNOWLEDGE,
+        ),
+        {},
+    )
+
+    assert result["study_design"] == "Systematic review / meta-analysis"
+    assert result["tier"] == "Tier 4: Low priority"
+    assert result["total_score"] <= 39
+    assert "veterinary" in result["non_human_signal"]
+    assert "non-human" in result["score_cap_reason"]
 
 
 def test_case_report_ranks_highest_for_rare_mode() -> None:
@@ -251,3 +375,122 @@ def test_research_mode_keeps_direct_case_reports_low_priority() -> None:
     assert result["topic_match_level"] == "strong_component"
     assert result["study_design"] == "Case series / case report"
     assert result["tier"] == "Tier 4: Low priority"
+
+
+def test_cam_icu_typo_expands_to_specific_delirium_tool() -> None:
+    expanded = expand_acronyms("complianse of cam icu")
+
+    assert expanded == "compliance of confusion assessment method for the intensive care unit"
+
+
+def test_cam_icu_compliance_search_layers_keep_specific_intent() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+
+    layers = build_search_layers(context, candidate_depth=30)
+    joined_queries = " ".join(layer.query for layer in layers)
+
+    assert "CAM-ICU" in joined_queries
+    assert "Confusion Assessment Method for the Intensive Care Unit" in joined_queries
+    assert "compliance" in joined_queries
+    assert "delirium" in joined_queries
+    assert "compliance" in user_intent_terms(context)
+
+
+def test_cam_icu_compliance_downranks_generic_icu_papers() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    relevant = {
+        "title": "Improving CAM-ICU compliance through nurse education in the intensive care unit",
+        "abstract": (
+            "CAM-ICU delirium screening compliance and adherence improved after "
+            "implementation of nurse education in critical care."
+        ),
+        "publication_types": ["Journal Article", "Observational Study"],
+        "journal": "Critical Care Nurse",
+        "pmid": "111",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/111/",
+        "citation_count": 25,
+        "citation_source": "OpenAlex",
+        "year": 2021,
+    }
+    off_topic = {
+        "title": "Measurement of irradiation doses secondary to bedside radiographs in a medical intensive care unit",
+        "abstract": (
+            "A quality audit measured radiograph exposure among nurses and patients "
+            "in a medical intensive care unit."
+        ),
+        "publication_types": ["Journal Article"],
+        "journal": "Intensive Care Medicine",
+        "pmid": "222",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/222/",
+        "citation_count": 60,
+        "citation_source": "OpenAlex",
+        "year": 2020,
+    }
+
+    relevant_scored = score_and_classify_paper(relevant, context, {})
+    off_topic_scored = score_and_classify_paper(off_topic, context, {})
+
+    assert relevant_scored["topic_match_level"] in {"direct", "direct_synonym", "strong_component", "abstract_only"}
+    assert off_topic_scored["topic_match_level"] == "noise"
+    assert off_topic_scored["tier"] == "Noise / manual review"
+    assert relevant_scored["total_score"] > off_topic_scored["total_score"]
+
+
+def test_cam_icu_compliance_requires_cam_or_compliance_anchor() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    generic_delirium = {
+        "title": "Nursing Understanding and Perceptions of Delirium in a Burn ICU",
+        "abstract": "This survey assessed current knowledge and beliefs about delirium among nurses in a burn ICU.",
+        "publication_types": ["Journal Article"],
+        "journal": "Journal of burn care & research",
+        "pmid": "333",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/333/",
+        "citation_count": 21,
+        "citation_source": "OpenAlex",
+        "year": 2019,
+    }
+
+    scored = score_and_classify_paper(generic_delirium, context, {})
+
+    assert scored["topic_match_level"] in {"background", "noise"}
+    assert scored["tier"] in {"Tier 3: Background", "Tier 4: Low priority", "Noise / manual review"}
+
+
+def test_cam_icu_compliance_rejects_generic_icu_compliance_trials() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    restraint_trial = {
+        "title": (
+            "Stepped wedge cluster randomised controlled trial to assess the impact "
+            "of a decision support tool for physical restraint use in intensive care units"
+        ),
+        "abstract": (
+            "The trial tested a nursing management strategy for physical restraint use "
+            "in ICU patients. Physical restraints have been associated with delirium, "
+            "and the study measured compliance with the intervention."
+        ),
+        "publication_types": ["Journal Article", "Randomized Controlled Trial"],
+        "journal": "BMJ Open",
+        "pmid": "444",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/444/",
+        "citation_count": 10,
+        "citation_source": "OpenAlex",
+        "year": 2024,
+    }
+
+    scored = score_and_classify_paper(restraint_trial, context, {})
+
+    assert scored["topic_match_level"] in {"background", "noise"}
+    assert scored["tier"] in {"Tier 4: Low priority", "Noise / manual review"}
+    assert scored["reading_section"] == "Low-priority/background papers"
