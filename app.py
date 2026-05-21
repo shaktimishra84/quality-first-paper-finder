@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from evidence_engine import build_evidence_review
+from export_formatter import export_to_bibtex, export_to_ris, export_to_json
 from paper_finder import (
     SEARCH_PURPOSE_DEEP,
     SEARCH_PURPOSE_DEFAULT,
@@ -1963,9 +1964,11 @@ def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
 
     top_results = display_df.head(25)
     pmids = "\n".join(full_df["pmid"].dropna().astype(str).loc[lambda s: s.str.len() > 0].tolist())
-    citation_records = full_df.to_dict("records")
-    bibtex = papers_to_bibtex(citation_records)
-    ris = papers_to_ris(citation_records)
+
+    # Generate professional exports with complete metadata
+    bibtex = export_to_bibtex(full_df)
+    ris = export_to_ris(full_df)
+    json_export = export_to_json(full_df)
 
     st.subheader("Full database")
     st.dataframe(
@@ -1999,18 +2002,28 @@ def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
         file_name="quality_first_pmids.txt",
         mime="text/plain",
     )
-    col4, col5 = st.columns(2)
-    col4.download_button(
-        "Download BibTeX",
+    st.subheader("Citation formats (Zotero-compatible)")
+    col1, col2, col3 = st.columns(3)
+    col1.download_button(
+        "📖 BibTeX (with metadata)",
         data=bibtex.encode("utf-8"),
-        file_name="quality_first_references.bib",
+        file_name="corepapers_references.bib",
         mime="application/x-bibtex",
+        help="Best for: LaTeX, Overleaf, academic publishing"
     )
-    col5.download_button(
-        "Download RIS",
+    col2.download_button(
+        "📚 RIS (with metadata)",
         data=ris.encode("utf-8"),
-        file_name="quality_first_references.ris",
+        file_name="corepapers_references.ris",
         mime="application/x-research-info-systems",
+        help="Best for: Zotero, Mendeley, EndNote"
+    )
+    col3.download_button(
+        "📋 JSON (richest metadata)",
+        data=json_export.encode("utf-8"),
+        file_name="corepapers_references.json",
+        mime="application/json",
+        help="Best for: Complete data export, custom processing"
     )
 
 
