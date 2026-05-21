@@ -239,6 +239,9 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
                     "source": result.best_source.source
                     if (result.has_pdf and result.best_source)
                     else "",
+                    "url": result.best_source.url
+                    if (result.has_pdf and result.best_source)
+                    else "",
                 }
             )
             progress.progress(index / max(len(rows), 1), text=f"Checked {index} of {len(rows)}…")
@@ -264,7 +267,10 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
     for item in attempt:
         title = item["title"][:90]
         if item["has_pdf"]:
-            st.markdown(f"✅ {title} — _{item['source']}_")
+            if item.get("url"):
+                st.markdown(f"✅ [{title}]({item['url']}) — _{item['source']}_")
+            else:
+                st.markdown(f"✅ {title} — _{item['source']}_")
         else:
             st.markdown(f"⚪ {title} — no free open-access PDF")
 
@@ -300,8 +306,8 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
         else:
             st.warning(
                 "The sources listed open-access PDFs, but none could be downloaded "
-                "automatically (some hosts block bots). Use each paper's **Open** link "
-                "to download it manually."
+                "automatically (some hosts block server downloads). Click a ✅ paper's "
+                "title above to open its PDF directly."
             )
 
 

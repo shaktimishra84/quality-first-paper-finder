@@ -11,6 +11,40 @@ from pdf_finder import find_legal_pdf
 from pdf_storage import PDFMetadata, PDFStorage
 
 
+# A realistic browser User-Agent; many OA publisher hosts reject bot-style
+# agents. We are only fetching open-access PDFs the user is entitled to.
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/pdf,application/octet-stream,*/*",
+}
+
+
+def _fetch_pdf_bytes(url: str) -> Optional[bytes]:
+    """Fetch a URL and return its bytes only if it is a genuine PDF."""
+    import requests
+
+    try:
+        response = requests.get(
+            url,
+            headers=BROWSER_HEADERS,
+            timeout=(5, 30),
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+    except Exception:
+        return None
+
+    content = response.content
+    content_type = response.headers.get("Content-Type", "").lower()
+    if content[:5] == b"%PDF-" or "application/pdf" in content_type:
+        return content
+    return None
+
+
 def generate_download_zip(
     selected_papers: list[dict],
     topic: str,
@@ -37,59 +71,47 @@ def generate_download_zip(
             if not result.has_pdf or not result.best_source:
                 continue
 
-            try:
-                # Download PDF to memory
-                import requests
+            # Try each discovered source URL until one yields a genuine PDF.
+            candidate_sources = result.sources or [result.best_source]
+            content = None
+            used_source = result.best_source
+            for source in candidate_sources:
+                fetched = _fetch_pdf_bytes(source.url)
+                if fetched is not None:
+                    content = fetched
+                    used_source = source
+                    break
 
-                response = requests.get(
-                    result.best_source.url,
-                    headers={"User-Agent": "CorePapers/1.0; pdf-download"},
-                    timeout=(5, 30),
-                    allow_redirects=True,
-                )
-                response.raise_for_status()
-
-                content = response.content
-                # Only keep genuine PDFs. Some OA hosts return an HTML
-                # interstitial or block automated access; those must not be
-                # written as ".pdf" or counted as a successful download.
-                content_type = response.headers.get("Content-Type", "").lower()
-                if not (content[:5] == b"%PDF-" or "application/pdf" in content_type):
-                    continue
-
-                # Safe filename
-                pdf_filename = _safe_filename(
-                    pmid=pmid,
-                    doi=doi,
-                    title=paper.get("title", ""),
-                    year=paper.get("year", ""),
-                )
-
-                # Add PDF to ZIP
-                zip_file.writestr(pdf_filename, content)
-                successful_downloads += 1
-
-                # Track metadata
-                metadata = PDFMetadata(
-                    title=str(paper.get("title", "")),
-                    authors=str(paper.get("authors", "")),
-                    journal=str(paper.get("journal", "")),
-                    year=str(paper.get("year", "")),
-                    doi=doi,
-                    pmid=pmid,
-                    pmcid=str(paper.get("pmcid", "")),
-                    source_of_pdf=result.best_source.source,
-                    license=result.best_source.license,
-                    downloaded_at=pd.Timestamp.now().isoformat(),
-                    search_query=str(paper.get("reading_section", "")),
-                    relevance_score=float(paper.get("composite_score", 0))
-                    if "composite_score" in paper
-                    else None,
-                )
-                metadata_list.append(metadata)
-
-            except Exception:
+            if content is None:
                 continue
+
+            pdf_filename = _safe_filename(
+                pmid=pmid,
+                doi=doi,
+                title=paper.get("title", ""),
+                year=paper.get("year", ""),
+            )
+
+            zip_file.writestr(pdf_filename, content)
+            successful_downloads += 1
+
+            metadata = PDFMetadata(
+                title=str(paper.get("title", "")),
+                authors=str(paper.get("authors", "")),
+                journal=str(paper.get("journal", "")),
+                year=str(paper.get("year", "")),
+                doi=doi,
+                pmid=pmid,
+                pmcid=str(paper.get("pmcid", "")),
+                source_of_pdf=used_source.source,
+                license=used_source.license,
+                downloaded_at=pd.Timestamp.now().isoformat(),
+                search_query=str(paper.get("reading_section", "")),
+                relevance_score=float(paper.get("composite_score", 0))
+                if "composite_score" in paper
+                else None,
+            )
+            metadata_list.append(metadata)
 
         # Add metadata CSV to ZIP
         if metadata_list:
