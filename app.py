@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from evidence_engine import build_evidence_review
+from evidence_engine import build_evidence_review, evidence_review_to_markdown
 from export_formatter import export_to_bibtex, export_to_ris, export_to_json
 from paper_finder import (
     SEARCH_PURPOSE_DEEP,
@@ -1075,7 +1075,7 @@ def main() -> None:
         render_gap_map(result.get("gap_map", []), result.get("subtopic_coverage", []))
 
     with tabs[7]:
-        render_exports(full_df, display_df)
+        render_exports(full_df, display_df, result)
 
     # Global selection/download bar — visible regardless of the active tier tab.
     st.divider()
@@ -2122,7 +2122,7 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
         )
 
 
-def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
+def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame, result: dict | None = None) -> None:
     if full_df.empty:
         st.warning("No exportable records.")
         return
@@ -2190,6 +2190,51 @@ def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
         mime="application/json",
         help="Best for: Complete data export, custom processing"
     )
+
+    if result is not None:
+        # Prefer the AI-augmented review the user generated in the Evidence
+        # review tab; otherwise build the base structured review.
+        cached_review = (st.session_state.get("_ai_review_cache") or {}).get("review")
+        review = cached_review or result.get("evidence_review") or build_evidence_review(result)
+        review_markdown = review.get("markdown") or evidence_review_to_markdown(review)
+        review_json = json.dumps(
+            {
+                "title": review.get("title"),
+                "date": review.get("date"),
+                "question": review.get("question"),
+                "ai_synthesis": review.get("ai_synthesis"),
+                "ai_gap_synthesis": review.get("ai_gap_synthesis"),
+                "gaps": review.get("gaps"),
+                "limitations": review.get("limitations"),
+                "sources": review.get("sources"),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        synthesis = review.get("ai_synthesis", {}) or {}
+        synthesis_ready = synthesis.get("status") == "generated"
+
+        st.subheader("Evidence review & AI synthesis")
+        st.caption(
+            "Full structured review including the source-grounded AI synthesis."
+            if synthesis_ready
+            else "Structured review. Enable AI synthesis in the Evidence review tab to include the narrative synthesis here."
+        )
+        rcol1, rcol2 = st.columns(2)
+        rcol1.download_button(
+            "📝 Evidence review (Markdown)",
+            data=review_markdown.encode("utf-8"),
+            file_name="corepapers_evidence_review.md",
+            mime="text/markdown",
+            help="Structured review + AI synthesis (when generated). Best for reading, sharing, or PDF.",
+        )
+        rcol2.download_button(
+            "🧩 Evidence review (JSON)",
+            data=review_json.encode("utf-8"),
+            file_name="corepapers_evidence_review.json",
+            mime="application/json",
+            help="Machine-readable review incl. AI synthesis, gaps, and source IDs.",
+        )
 
 
 def safe_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:

@@ -917,6 +917,32 @@ def _limitations(records: list[dict[str, Any]], result: dict[str, Any]) -> list[
     return _dedupe(limitations)
 
 
+def _expansion_trace_note(result: dict[str, Any]) -> str:
+    """Describe whether LLM query expansion fired, for the workflow trace."""
+    primer_status = str(result.get("topic_primer_status", "") or "")
+    recall_terms = 0
+    for layer in result.get("layers", []) or []:
+        name = layer.get("name", "") if isinstance(layer, dict) else getattr(layer, "name", "")
+        if name == "LLM-expanded recall":
+            query = layer.get("query", "") if isinstance(layer, dict) else getattr(layer, "query", "")
+            recall_terms = str(query).count("[Title/Abstract]")
+            break
+    if recall_terms >= 2:
+        basis = {
+            "generated": "LLM primer",
+            "cached": "LLM primer",
+            "profile": "curated profile",
+        }.get(primer_status, primer_status or "topic profile")
+        return f" LLM query expansion: {recall_terms} recall terms from {basis}."
+    if primer_status in {"generated", "cached"}:
+        return " LLM primer active (no extra recall layer in this mode)."
+    if primer_status == "profile":
+        return " Expansion from curated topic profile."
+    if primer_status in {"error", "unavailable"}:
+        return f" LLM query expansion off (primer: {primer_status})."
+    return ""
+
+
 def _workflow_trace(result: dict[str, Any]) -> list[dict[str, str]]:
     layer_count = len(result.get("layers", []) or [])
     api_pmids = len((result.get("api_discovery", {}) or {}).get("pmids", []) or [])
@@ -925,7 +951,7 @@ def _workflow_trace(result: dict[str, Any]) -> list[dict[str, str]]:
     accepted = len(result.get("papers", []) or [])
     purpose = result.get("search_purpose", "research goal")
     values = {
-        "Plan": f"Topic/PICO framed for {purpose}; {layer_count} search layers configured.",
+        "Plan": f"Topic/PICO framed for {purpose}; {layer_count} search layers configured.{_expansion_trace_note(result)}",
         "Gather": f"{retrieved} candidate records gathered; API supervisor contributed {api_pmids} PMID(s).",
         "Researcher triage": f"{accepted} verified records admitted after dedupe, topic gate, and design classification.",
         "Verifier": "PMID/DOI/source identifiers checked before admission; enrichment caveats retained.",

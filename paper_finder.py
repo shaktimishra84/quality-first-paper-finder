@@ -808,6 +808,23 @@ def build_search_layers(
                     retmax=max(30, candidate_depth // 3),
                 )
             )
+    # LLM/profile-derived query expansion for recall-oriented modes. ORs the
+    # union of synonyms, components, parent topics, and mechanisms (from the
+    # Gemini primer or a curated topic profile) with no publication-type filter.
+    # Hits still pass the downstream topic gate, verification, and tier-aware
+    # scoring, so broadening recall here cannot bypass the verified-source rule.
+    recall_expansion_terms = clean_term_list(
+        list(semantic_terms.get("synonym", []))
+        + list(semantic_terms.get("component", []))
+        + list(semantic_terms.get("parent", []))
+        + list(semantic_terms.get("mechanism", []))
+    )[:24]
+    recall_expansion_clauses = [
+        clause
+        for clause in (pubmed_term_clause(term, "Title/Abstract") for term in recall_expansion_terms)
+        if clause
+    ]
+
     if purpose == SEARCH_PURPOSE_DEEP:
         layers.insert(
             0,
@@ -827,29 +844,13 @@ def build_search_layers(
                 retmax=max(candidate_depth // 2, 100),
             ),
         )
-        # Deep-mode LLM query expansion: OR the full union of LLM/profile-derived
-        # synonyms, components, parent topics, and mechanisms (uncapped beyond a
-        # sane ceiling, no publication-type filter) to maximise recall on
-        # literature indexed under alternate terminology. Hits still pass the
-        # downstream topic gate, verification, and tier-aware scoring.
-        deep_expansion_terms = clean_term_list(
-            list(semantic_terms.get("synonym", []))
-            + list(semantic_terms.get("component", []))
-            + list(semantic_terms.get("parent", []))
-            + list(semantic_terms.get("mechanism", []))
-        )[:24]
-        deep_expansion_clauses = [
-            clause
-            for clause in (pubmed_term_clause(term, "Title/Abstract") for term in deep_expansion_terms)
-            if clause
-        ]
-        if len(deep_expansion_clauses) >= 2:
+        if len(recall_expansion_clauses) >= 2:
             layers.insert(
                 2,
                 SearchLayer(
                     name="LLM-expanded recall",
                     purpose="Deep-mode exhaustive recall: OR of LLM/profile-derived synonyms, components, parent topics, and mechanisms to catch literature indexed under alternate terminology.",
-                    query=f"({' OR '.join(deep_expansion_clauses)})",
+                    query=f"({' OR '.join(recall_expansion_clauses)})",
                     retmax=max(candidate_depth, 150),
                 ),
             )
@@ -878,6 +879,16 @@ def build_search_layers(
                 retmax=max(candidate_depth // 2, 100),
             ),
         )
+        if len(recall_expansion_clauses) >= 2:
+            layers.insert(
+                2,
+                SearchLayer(
+                    name="LLM-expanded recall",
+                    purpose="Rare-mode recall: OR of LLM/profile-derived synonyms, eponyms, aliases, components, and parent topics to surface scattered case reports indexed under alternate terminology.",
+                    query=f"({' OR '.join(recall_expansion_clauses)})",
+                    retmax=max(candidate_depth, 150),
+                ),
+            )
     return layers
 
 
