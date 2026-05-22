@@ -15,18 +15,6 @@ from pdf_storage import PDFMetadata, PDFStorage
 MAX_SELECTIONS = 50
 
 
-def get_download_folder() -> Path:
-    """Get download folder from sidebar, create if needed."""
-    default_path = str(Path.home() / "Documents" / "CorePaper_Downloads")
-    path_str = st.sidebar.text_input(
-        "PDF Download Folder",
-        value=st.session_state.get("download_folder", default_path),
-        help="Where to save downloaded PDFs and metadata",
-    )
-    st.session_state["download_folder"] = path_str
-    return Path(path_str)
-
-
 def _resolve_secret(*names: str) -> str:
     """Resolve the first non-empty value from Streamlit secrets, then env."""
     for name in names:
@@ -467,27 +455,11 @@ def render_paper_selection_list(df: pd.DataFrame, max_per_view: int = 10) -> Non
             st.caption(row.get("tier", "—"))
 
 
-def render_bulk_download(
-    df: pd.DataFrame,
-    topic: str,
-    download_folder: Path,
-    email: str,
-) -> None:
-    """Legacy function - now handled in main results."""
-    pass
+def show_pdf_settings() -> str:
+    """Resolve the contact email for Unpaywall.
 
-
-def show_pdf_settings() -> tuple[Path, str]:
-    """Show PDF settings in sidebar, return folder and email."""
-    with st.sidebar:
-        st.divider()
-        st.subheader("📥 PDF Downloads")
-
-        download_folder = get_download_folder()
-        email = get_ncbi_email()
-
-        if download_folder.exists():
-            file_count = len(list(download_folder.glob("**/*.pdf")))
-            st.caption(f"📁 {file_count} PDFs stored")
-
-    return download_folder, email
+    Uses the email configured in Streamlit secrets; only renders a sidebar
+    input when none is configured. No download-folder field (the ZIP is
+    delivered through the browser, so a server-side path is meaningless).
+    """
+    return get_ncbi_email()

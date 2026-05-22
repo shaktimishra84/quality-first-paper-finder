@@ -1030,7 +1030,7 @@ def main() -> None:
     init_selection_state()
 
     # Get email for PDF downloads from sidebar
-    _, email = show_pdf_settings()
+    email = show_pdf_settings()
 
     tabs = st.tabs(
         [
@@ -2024,33 +2024,6 @@ def render_evidence_review(result: dict) -> None:
             file_name="quality_first_evidence_review.md",
             mime="text/markdown",
         )
-
-
-def render_pdf_downloads(full_df: pd.DataFrame, result: dict, topic: str) -> None:
-    """Render PDF download interface."""
-    download_folder, email = show_pdf_settings()
-
-    if full_df.empty:
-        st.warning("No papers to download.")
-        return
-
-    st.subheader("Download Legal PDFs")
-    st.caption(
-        "CorePapers searches legal open-access sources: Unpaywall, PubMed Central OA, "
-        "Europe PMC, and OpenAlex. No paywalls are bypassed."
-    )
-
-    render_bulk_download(full_df, topic, download_folder, email)
-
-    st.divider()
-    st.subheader("What gets downloaded")
-    st.markdown(
-        """
-        - **PDF file** from the best legal open-access source
-        - **Metadata** (JSON): title, authors, journal, DOI, PMID, license, download date, relevance score
-        - **Organized by topic and date**: `CorePaper_Downloads/Sepsis/2026-05-21/`
-        """
-    )
 
 
 def render_exports(full_df: pd.DataFrame, display_df: pd.DataFrame) -> None:
