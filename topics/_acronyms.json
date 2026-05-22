@@ -47,5 +47,8 @@
   "gcs": "glasgow coma scale",
   "icp": "intracranial pressure",
   "raas": "renin angiotensin aldosterone system",
-  "ckd-mbd": "chronic kidney disease mineral and bone disorder"
+  "ckd-mbd": "chronic kidney disease mineral and bone disorder",
+  "hydrocort": "hydrocortisone",
+  "methylpred": "methylprednisolone",
+  "abx": "antibiotics"
 }
