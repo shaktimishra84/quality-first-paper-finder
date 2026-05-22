@@ -89,12 +89,73 @@ HIGH_VALUE_DESIGNS = {
     "Landmark randomized trial",
     "Randomized controlled trial",
 }
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+# Fallback model used only if live model discovery fails. Discovery is primary
+# because Google retires/renames Gemini models over time (a stale name 404s).
 GEMINI_MODEL = "gemini-2.0-flash"
-GEMINI_ENDPOINT = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-)
+GEMINI_ENDPOINT = f"{GEMINI_API_BASE}/models/{GEMINI_MODEL}:generateContent"
 GAP_SYNTHESIS_TIMEOUT_S = 35
 EVIDENCE_SYNTHESIS_TIMEOUT_S = 50
+MODEL_DISCOVERY_TIMEOUT_S = 15
+
+# Cache of a resolved generateContent-capable model name (per process).
+_RESOLVED_GEMINI_MODEL: str | None = None
+
+
+def _sanitize_gemini_error(exc: Exception) -> str:
+    """Strip the API key from any error text before it reaches the UI/logs."""
+    message = re.sub(r"key=[A-Za-z0-9_\-]+", "key=REDACTED", str(exc))
+    return message[:160]
+
+
+def _rank_gemini_model(name: str) -> tuple[int, str]:
+    lowered = name.lower()
+    score = 0
+    if "flash" in lowered:
+        score -= 3  # prefer fast, cheap flash models
+    if "latest" in lowered:
+        score -= 1
+    if any(tag in lowered for tag in ("exp", "preview", "thinking", "vision", "tts", "image")):
+        score += 5  # avoid experimental / non-text-chat variants
+    return (score, name)
+
+
+def resolve_gemini_model(gemini_key: str, preferred: str = "") -> str:
+    """Return a model name that supports generateContent for this key.
+
+    Queries the Generative Language API once and caches a stable flash model,
+    so the feature keeps working even when a hardcoded model name is retired.
+    Falls back to GEMINI_MODEL if discovery fails.
+    """
+    global _RESOLVED_GEMINI_MODEL
+    if preferred:
+        return preferred
+    if _RESOLVED_GEMINI_MODEL:
+        return _RESOLVED_GEMINI_MODEL
+    try:
+        response = requests.get(
+            f"{GEMINI_API_BASE}/models",
+            params={"key": gemini_key},
+            timeout=MODEL_DISCOVERY_TIMEOUT_S,
+        )
+        response.raise_for_status()
+        models = response.json().get("models", []) or []
+        candidates = [
+            str(model.get("name", "")).split("/")[-1]
+            for model in models
+            if "generateContent" in (model.get("supportedGenerationMethods") or [])
+        ]
+        candidates = [name for name in candidates if name]
+        if candidates:
+            _RESOLVED_GEMINI_MODEL = sorted(candidates, key=_rank_gemini_model)[0]
+            return _RESOLVED_GEMINI_MODEL
+    except Exception:
+        pass
+    return GEMINI_MODEL
+
+
+def _gemini_generate_endpoint(gemini_key: str) -> str:
+    return f"{GEMINI_API_BASE}/models/{resolve_gemini_model(gemini_key)}:generateContent"
 
 
 def build_evidence_review(
@@ -398,7 +459,7 @@ def generate_ai_gap_synthesis(review: dict[str, Any], gemini_key: str) -> dict[s
 
     try:
         response = requests.post(
-            f"{GEMINI_ENDPOINT}?key={gemini_key}",
+            f"{_gemini_generate_endpoint(gemini_key)}?key={gemini_key}",
             json=body,
             timeout=GAP_SYNTHESIS_TIMEOUT_S,
         )
@@ -412,7 +473,7 @@ def generate_ai_gap_synthesis(review: dict[str, Any], gemini_key: str) -> dict[s
         return {
             "status": "blocked",
             "items": [],
-            "note": f"AI gap synthesis could not be completed: {str(exc)[:160]}",
+            "note": f"AI gap synthesis could not be completed: {_sanitize_gemini_error(exc)}",
         }
 
     valid_source_ids = {source["source_id"] for source in sources if source.get("source_id")}
@@ -577,7 +638,7 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
 
     try:
         response = requests.post(
-            f"{GEMINI_ENDPOINT}?key={gemini_key}",
+            f"{_gemini_generate_endpoint(gemini_key)}?key={gemini_key}",
             json=body,
             timeout=EVIDENCE_SYNTHESIS_TIMEOUT_S,
         )
@@ -595,7 +656,7 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
             "agreements": [],
             "conflicts": [],
             "uncertainties": [],
-            "note": f"AI evidence synthesis could not be completed: {str(exc)[:160]}",
+            "note": f"AI evidence synthesis could not be completed: {_sanitize_gemini_error(exc)}",
         }
 
     if not isinstance(parsed, dict):
