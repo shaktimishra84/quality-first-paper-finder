@@ -1138,6 +1138,8 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
             chips.append(context_chip("Primer cached this session", "muted"))
     elif primer_status == "unavailable":
         chips.append(context_chip("Primer unavailable — add a Gemini key in the sidebar", "muted"))
+    elif primer_status == "error":
+        chips.append(context_chip("Primer error — Gemini key present but the call failed (check model/quota)", "warn"))
 
     mesh_records = result.get("mesh_discovered", []) or []
     descriptor_names = [

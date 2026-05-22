@@ -3646,7 +3646,8 @@ def register_primer_if_needed(
     - 'profile'      — hand-authored topics/*.json profile matched
     - 'cached'       — primer already cached in this process
     - 'generated'    — primer just generated and registered
-    - 'unavailable'  — no profile, no key, or LLM call failed
+    - 'unavailable'  — no profile and no Gemini key configured
+    - 'error'        — key present but the Gemini call failed (model/quota/network)
     """
     if not topic.strip():
         return "unavailable"
@@ -3666,7 +3667,9 @@ def register_primer_if_needed(
 
     primer = prime_topic(topic, gemini_api_key, email=email, api_key=api_key)
     if primer is None:
-        return "unavailable"
+        # Key was present but the call produced nothing — model name, quota,
+        # or network. Distinct from 'unavailable' (no key at all).
+        return "error"
     _PRIMED_PROFILES[cache_key] = primer.to_profile_dict()
     return "generated"
 
