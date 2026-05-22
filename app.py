@@ -882,7 +882,12 @@ def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, s
     google_notes = ""
     email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
     ncbi_api_key = app_secret("ncbi_api_key")
-    gemini_api_key = app_secret("gemini_api_key")
+    gemini_api_key = (
+        app_secret("gemini_api_key")
+        or app_secret("google_api_key")
+        or app_secret("gemini_key")
+        or app_secret("gemini")
+    )
     semantic_scholar_api_key = app_secret("semantic_scholar_api_key") or app_secret("s2_api_key")
     quartile_file = None
     with st.sidebar:
