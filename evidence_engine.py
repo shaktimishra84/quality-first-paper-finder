@@ -543,6 +543,8 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
             "key_role": source.get("key_role"),
             "confidence": source.get("confidence"),
             "caveats": source.get("caveats"),
+            "recall_only": bool(source.get("expansion_recall_only")),
+            "abstract": (str(source.get("abstract") or "").strip()[:800]) or None,
         }
         for source in (review.get("sources", []) or [])[:40]
     ]
@@ -591,21 +593,28 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
     }
     system = (
         "You are a biomedical evidence synthesist. Write a faithful narrative "
-        "synthesis of the literature using ONLY the provided source IDs and "
-        "metadata. Integrity rules: (1) Never introduce a paper, statistic, "
-        "effect size, p-value, or claim that is not present in the supplied "
-        "sources. (2) Every theme, agreement, and conflict must cite at least "
-        "one provided source_id; do not cite IDs that were not provided. "
-        "(3) Preserve uncertainty and disagreement between studies — never "
-        "smooth it away. (4) Set is_inference=true for any statement that is "
-        "your own synthesis across sources rather than directly supported by a "
-        "single source's metadata. (5) Do NOT give patient-specific medical "
-        "advice, dosing, or treatment recommendations; describe what the "
-        "evidence shows, not what a clinician should do. (6) strength_of_evidence "
-        "must be one of: high, moderate, low, very low — based on the evidence "
-        "type and tier of the citing sources. (7) When the supplied metadata is "
-        "insufficient to support a claim, omit the claim rather than guessing. "
-        "This is research synthesis, not medical advice."
+        "synthesis of the literature using ONLY the provided sources (their "
+        "metadata and, when present, their abstracts). Integrity rules: "
+        "(1) Never introduce a paper, statistic, effect size, p-value, or claim "
+        "that is not present in the supplied sources. When a source includes an "
+        "abstract, you may summarise the findings it reports, but do not add "
+        "numbers or conclusions the abstract does not state. When a source has "
+        "no abstract, restrict yourself to metadata-level statements about it "
+        "(study type, role) and do not invent its findings. (2) Every theme, "
+        "agreement, and conflict must cite at least one provided source_id; do "
+        "not cite IDs that were not provided. (3) Preserve uncertainty and "
+        "disagreement between studies — never smooth it away. (4) Set "
+        "is_inference=true for any statement that is your own synthesis across "
+        "sources rather than directly supported by a single source. (5) Do NOT "
+        "give patient-specific medical advice, dosing, or treatment "
+        "recommendations; describe what the evidence shows, not what a clinician "
+        "should do. (6) strength_of_evidence must be one of: high, moderate, "
+        "low, very low — based on the evidence type and tier of the citing "
+        "sources. (7) Treat sources flagged recall_only=true with extra caution: "
+        "they were retrieved by a broad terminology-expansion net and may be "
+        "tangential — do not let them dominate the synthesis. (8) When the "
+        "supplied information is insufficient to support a claim, omit it rather "
+        "than guessing. This is research synthesis, not medical advice."
     )
     body = {
         "system_instruction": {"parts": [{"text": system}]},
@@ -756,6 +765,8 @@ def _source_record(source_number: int, paper: dict[str, Any]) -> dict[str, Any]:
         "confidence": confidence,
         "caveats": "; ".join(caveats) if caveats else "No major metadata caveat flagged.",
         "source_records": str(paper.get("source_records", "") or "").strip(),
+        "expansion_recall_only": bool(paper.get("expansion_recall_only")),
+        "abstract": str(paper.get("abstract", "") or "").strip()[:1500],
     }
 
 
@@ -1037,6 +1048,8 @@ def _paper_caveats(paper: dict[str, Any]) -> list[str]:
         caveats.append("observational design")
     if paper.get("tier_cap_reason"):
         caveats.append(str(paper.get("tier_cap_reason")))
+    if paper.get("expansion_recall_only"):
+        caveats.append("entered via expanded-recall net only")
     return _dedupe(caveats)
 
 

@@ -1098,6 +1098,18 @@ def run_quality_first_search(
         missing_from_automatic = []
 
     deduped = deduplicate_papers(all_papers)
+    # Flag papers that entered ONLY through the broad LLM-expanded recall net
+    # (no precise layer, API supervisor, or expected-paper seed also matched).
+    # These are the most likely to be tangential, so they get a transparency
+    # caveat and a low-priority sort tiebreak; the topic gate still caps their
+    # tier, so this does not penalise genuine recall wins that match directly.
+    for paper in deduped:
+        layers_found = paper.get("search_layers") or []
+        if isinstance(layers_found, str):
+            layers_found = [name.strip() for name in layers_found.split(",") if name.strip()]
+        paper["expansion_recall_only"] = (
+            bool(layers_found) and set(layers_found) == {"LLM-expanded recall"}
+        )
     accepted = [paper for paper in deduped if is_verified(paper)]
     rejected = [paper for paper in deduped if not is_verified(paper)]
 
@@ -4733,7 +4745,7 @@ def apply_evidence_family_ranks(papers: list[dict[str, Any]]) -> None:
                 paper["why_included"] += "; same evidence family as a higher-ranked paper"
 
 
-def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int]:
+def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int, int]:
     section_order = reading_section_order(paper.get("search_mode", "")).get(
         paper.get("reading_section", ""),
         99,
@@ -4746,6 +4758,9 @@ def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int,
     purpose_score = int(paper.get("purpose_fit_score", 0))
     total = int(paper.get("total_score", 0))
     year = int(paper.get("year") or 0)
+    # Lowest-priority tiebreak: when everything else is equal, a paper found
+    # only by the broad recall net sorts after one found by a precise layer.
+    recall_only_order = 1 if paper.get("expansion_recall_only") else 0
     return (
         section_order,
         expected_order,
@@ -4756,6 +4771,7 @@ def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int,
         -purpose_score,
         -total,
         -year,
+        recall_only_order,
     )
 
 
