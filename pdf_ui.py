@@ -263,10 +263,7 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
     for item in attempt:
         title = item["title"][:90]
         if item["has_pdf"]:
-            if item.get("url"):
-                st.markdown(f"✅ [{title}]({item['url']}) — _{item['source']}_")
-            else:
-                st.markdown(f"✅ {title} — _{item['source']}_")
+            st.markdown(f"✅ {title} — _{item['source']}_")
         else:
             st.markdown(f"⚪ {title} — no free open-access PDF")
 
@@ -278,8 +275,32 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
         )
         return
 
-    # Step 3: download only the PDFs that were actually retrieved.
-    if st.button(f"📥 Download {len(found)} PDF(s) as ZIP", key="build_zip_button", type="primary"):
+    # Step 3: two ways to get the found PDFs.
+    st.markdown("**Get the PDFs — two ways:**")
+    opt_zip, opt_links = st.columns(2)
+    with opt_zip:
+        zip_clicked = st.button(
+            f"📥 Download {len(found)} as ZIP",
+            key="build_zip_button",
+            type="primary",
+            use_container_width=True,
+        )
+        st.caption("Server fetches each PDF into a ZIP. Some publisher hosts block this.")
+    with opt_links:
+        show_links = st.toggle("🔗 Show direct links", key="show_links_toggle")
+        st.caption("Open each PDF yourself in the browser — works even when the server is blocked.")
+
+    if show_links:
+        link_items = [item for item in found if item.get("url")]
+        st.markdown("**Direct open-access links** (open in your browser):")
+        for item in link_items:
+            st.markdown(f"- [{item['title'][:90]}]({item['url']}) — _{item['source']}_")
+        urls = "\n".join(item["url"] for item in link_items)
+        if urls:
+            st.caption("Or copy all links:")
+            st.code(urls, language="text")
+
+    if zip_clicked:
         with st.spinner("Fetching PDFs and building ZIP…"):
             try:
                 zip_bytes, filename, packaged = generate_download_zip(
@@ -302,14 +323,14 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
             if packaged < len(found):
                 st.info(
                     f"{len(found) - packaged} found PDF(s) couldn't be downloaded "
-                    "automatically (the host blocks server downloads). Open them "
-                    "via the ✅ links above to grab them in your browser."
+                    "automatically (the host blocks server downloads). Use **🔗 Show "
+                    "direct links** to open them in your browser."
                 )
         else:
             st.warning(
                 "The sources listed open-access PDFs, but none could be downloaded "
-                "automatically (some hosts block server downloads). Click a ✅ paper's "
-                "title above to open its PDF directly."
+                "automatically (some hosts block server downloads). Use **🔗 Show direct "
+                "links** to open them in your browser."
             )
 
 
