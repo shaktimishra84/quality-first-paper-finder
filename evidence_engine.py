@@ -591,6 +591,32 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
         },
         "required": ["executive_summary", "themes"],
     }
+    question = review.get("question", {}) or {}
+    question_type = str(question.get("question_type", "") or "")
+    has_pico = any(
+        str(question.get(key, "") or "").strip()
+        for key in ("population", "intervention", "comparator", "outcome")
+    )
+    focused = has_pico or question_type in {
+        "Intervention or treatment",
+        "Diagnosis",
+        "Prognosis or prediction",
+        "Implementation or cost",
+    }
+    if focused:
+        focus_instruction = (
+            " This is a FOCUSED clinical question. Populate 'agreements' with points "
+            "where the studies concur on the question and 'conflicts' where they "
+            "diverge — each citing source_ids. Organise themes around the question."
+        )
+    else:
+        focus_instruction = (
+            " This is a BROAD topic overview, NOT a focused clinical question, so "
+            "there is no single statement to agree or disagree on. Leave 'agreements' "
+            "and 'conflicts' EMPTY. Instead map the thematic landscape: cover the main "
+            "subtopics the literature addresses, and use strength_of_evidence on each "
+            "theme to convey whether it is well-established, emerging, or uncertain."
+        )
     system = (
         "You are a biomedical evidence synthesist. Write a faithful narrative "
         "synthesis of the literature using ONLY the provided sources (their "
@@ -615,7 +641,7 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
         "tangential — do not let them dominate the synthesis. (8) When the "
         "supplied information is insufficient to support a claim, omit it rather "
         "than guessing. This is research synthesis, not medical advice."
-    )
+    ) + focus_instruction
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [
@@ -721,16 +747,25 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
     ][:10]
 
     has_content = bool(executive_summary or themes)
+    # Agreement/conflict is a focused-question construct; for a broad topic
+    # overview there is no single statement to agree or disagree on, so drop them.
+    agreements = _citing_list(parsed.get("agreements")) if focused else []
+    conflicts = _citing_list(parsed.get("conflicts")) if focused else []
     return {
         "status": "generated" if has_content else "blocked",
+        "query_focus": "focused" if focused else "broad",
         "executive_summary": executive_summary,
         "themes": themes,
-        "agreements": _citing_list(parsed.get("agreements")),
-        "conflicts": _citing_list(parsed.get("conflicts")),
+        "agreements": agreements,
+        "conflicts": conflicts,
         "uncertainties": uncertainties,
         "note": (
             "AI synthesis cites source IDs from the verified result set only. "
             "Research synthesis, not medical advice."
+            + (
+                " Broad topic overview — agreement/conflict omitted (only meaningful "
+                "for a focused question)." if not focused else ""
+            )
         ),
     }
 

@@ -73,8 +73,10 @@ def test_synthesis_strips_fabricated_source_ids(monkeypatch) -> None:
     monkeypatch.setattr(evidence_engine, "resolve_gemini_model", lambda key: "gemini-x")
     monkeypatch.setattr(evidence_engine.requests, "post", lambda *a, **k: _FakeResp(payload))
 
-    review = {"question": {}, "sources": [{"source_id": "S1", "title": "A"},
-                                          {"source_id": "S2", "title": "B"}]}
+    # Focused question so agreement/conflict are retained and we can assert on them.
+    review = {"question": {"question_type": "Intervention or treatment"},
+              "sources": [{"source_id": "S1", "title": "A"},
+                          {"source_id": "S2", "title": "B"}]}
     out = generate_ai_evidence_synthesis(review, "FAKE")
 
     assert out["status"] == "generated"
@@ -82,6 +84,41 @@ def test_synthesis_strips_fabricated_source_ids(monkeypatch) -> None:
     assert out["themes"][0]["source_ids"] == ["S1"]      # S99 stripped
     assert len(out["agreements"]) == 1
     assert out["agreements"][0]["source_ids"] == ["S2"]
+
+
+def _synthesis_with_agreements(monkeypatch, question: dict):
+    payload = _gemini_text_payload(
+        {
+            "executive_summary": "Summary.",
+            "themes": [{"theme": "T", "summary": "s", "source_ids": ["S1"],
+                        "strength_of_evidence": "moderate"}],
+            "agreements": [{"statement": "studies concur", "source_ids": ["S1"]}],
+            "conflicts": [{"statement": "studies diverge", "source_ids": ["S1"]}],
+            "uncertainties": ["u"],
+        }
+    )
+    monkeypatch.setattr(evidence_engine, "resolve_gemini_model", lambda key: "gemini-x")
+    monkeypatch.setattr(evidence_engine.requests, "post", lambda *a, **k: _FakeResp(payload))
+    review = {"question": question, "sources": [{"source_id": "S1", "title": "A"}]}
+    return generate_ai_evidence_synthesis(review, "FAKE")
+
+
+def test_broad_query_drops_agreements_and_conflicts(monkeypatch) -> None:
+    out = _synthesis_with_agreements(monkeypatch, {"question_type": "General evidence map"})
+    assert out["query_focus"] == "broad"
+    assert out["agreements"] == []      # dropped even though the model returned them
+    assert out["conflicts"] == []
+    assert out["themes"]                # landscape themes still present
+
+
+def test_focused_query_keeps_agreements_and_conflicts(monkeypatch) -> None:
+    out = _synthesis_with_agreements(
+        monkeypatch,
+        {"question_type": "Intervention or treatment", "intervention": "corticosteroids"},
+    )
+    assert out["query_focus"] == "focused"
+    assert out["agreements"] and out["agreements"][0]["source_ids"] == ["S1"]
+    assert out["conflicts"]
 
 
 def test_synthesis_sends_abstracts_to_the_model(monkeypatch) -> None:

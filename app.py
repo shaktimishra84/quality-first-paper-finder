@@ -1931,6 +1931,7 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
         ].copy()
         top_display["year"] = pd.to_numeric(top_display["year"], errors="coerce").astype("Int64")
         render_html('<div class="qf-section-caption">Top relevant papers</div>')
+        st.caption("Tip: drag a column's right edge to widen it, or download the full table below.")
         st.dataframe(
             top_display,
             use_container_width=True,
@@ -1947,6 +1948,13 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
                 "pmid": st.column_config.TextColumn("PMID", width="small"),
                 "doi": st.column_config.TextColumn("DOI", width="medium"),
             },
+        )
+        st.download_button(
+            "⬇ Top papers (CSV)",
+            data=top_display.to_csv(index=False).encode("utf-8"),
+            file_name="corepapers_top_papers.csv",
+            mime="text/csv",
+            key="dl_top_papers",
         )
     else:
         st.info("No review-eligible sources were admitted.")
@@ -1983,12 +1991,24 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
                 "example_sources": st.column_config.TextColumn("Examples", width="medium"),
             },
         )
+        st.download_button(
+            "⬇ Evidence hierarchy (CSV)",
+            data=hierarchy_df[["hierarchy_rank", "evidence_type", "count", "example_sources"]]
+            .to_csv(index=False)
+            .encode("utf-8"),
+            file_name="corepapers_evidence_hierarchy.csv",
+            mime="text/csv",
+            key="dl_hierarchy",
+        )
 
     comparison_df = pd.DataFrame(review.get("source_comparison", []))
     if not comparison_df.empty:
         with st.expander("Source comparison matrix", expanded=False):
+            comparison_cols = comparison_df[
+                ["source_id", "evidence_type", "key_role", "confidence", "caveats"]
+            ]
             st.dataframe(
-                comparison_df[["source_id", "evidence_type", "key_role", "confidence", "caveats"]],
+                comparison_cols,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -1998,6 +2018,13 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
                     "confidence": st.column_config.TextColumn("Confidence", width="small"),
                     "caveats": st.column_config.TextColumn("Caveats", width="large"),
                 },
+            )
+            st.download_button(
+                "⬇ Source comparison (CSV)",
+                data=comparison_cols.to_csv(index=False).encode("utf-8"),
+                file_name="corepapers_source_comparison.csv",
+                mime="text/csv",
+                key="dl_comparison",
             )
 
     gap_col, limit_col = st.columns(2)
@@ -2050,6 +2077,8 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
             else:
                 st.caption(ai_synthesis.get("note", status))
 
+            is_focused = ai_synthesis.get("query_focus") != "broad"
+
             if ai_synthesis.get("executive_summary"):
                 st.markdown("**Executive summary**")
                 st.markdown(ai_synthesis["executive_summary"])
@@ -2064,11 +2093,12 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
                     theme_df["is_inference"] = theme_df["is_inference"].apply(
                         lambda flag: "Inference" if flag else "Direct"
                     )
-                st.markdown("**Themes**")
+                st.markdown("**Themes**" if is_focused else "**Evidence landscape**")
+                theme_view = theme_df[
+                    ["theme", "summary", "strength_of_evidence", "is_inference", "source_ids"]
+                ]
                 st.dataframe(
-                    theme_df[
-                        ["theme", "summary", "strength_of_evidence", "is_inference", "source_ids"]
-                    ],
+                    theme_view,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
@@ -2079,24 +2109,34 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
                         "source_ids": st.column_config.TextColumn("Sources", width="small"),
                     },
                 )
+                st.download_button(
+                    "⬇ Synthesis themes (CSV)",
+                    data=theme_view.to_csv(index=False).encode("utf-8"),
+                    file_name="corepapers_synthesis_themes.csv",
+                    mime="text/csv",
+                    key="dl_themes",
+                )
 
-            agreements = ai_synthesis.get("agreements", []) or []
-            conflicts = ai_synthesis.get("conflicts", []) or []
-            agree_col, conflict_col = st.columns(2)
-            with agree_col:
-                st.markdown("**Areas of agreement**")
-                if not agreements:
-                    st.caption("None identified.")
-                for item in agreements[:8]:
-                    sources = ", ".join(item.get("source_ids", []) or [])
-                    st.markdown(f"- {item.get('statement', '')} _({sources or 'n/a'})_")
-            with conflict_col:
-                st.markdown("**Conflicting / divergent evidence**")
-                if not conflicts:
-                    st.caption("None identified.")
-                for item in conflicts[:8]:
-                    sources = ", ".join(item.get("source_ids", []) or [])
-                    st.markdown(f"- {item.get('statement', '')} _({sources or 'n/a'})_")
+            # Agreement/conflict is only meaningful for a focused clinical question.
+            # For a broad topic overview the themes above are the synthesis.
+            if is_focused:
+                agreements = ai_synthesis.get("agreements", []) or []
+                conflicts = ai_synthesis.get("conflicts", []) or []
+                agree_col, conflict_col = st.columns(2)
+                with agree_col:
+                    st.markdown("**Areas of agreement**")
+                    if not agreements:
+                        st.caption("None identified.")
+                    for item in agreements[:8]:
+                        sources = ", ".join(item.get("source_ids", []) or [])
+                        st.markdown(f"- {item.get('statement', '')} _({sources or 'n/a'})_")
+                with conflict_col:
+                    st.markdown("**Conflicting / divergent evidence**")
+                    if not conflicts:
+                        st.caption("None identified.")
+                    for item in conflicts[:8]:
+                        sources = ", ".join(item.get("source_ids", []) or [])
+                        st.markdown(f"- {item.get('statement', '')} _({sources or 'n/a'})_")
 
             uncertainties = ai_synthesis.get("uncertainties", []) or []
             if uncertainties:
