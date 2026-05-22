@@ -9,8 +9,61 @@ from urllib.parse import urljoin
 
 import pandas as pd
 
+from export_formatter import export_to_bibtex, export_to_ris
 from pdf_finder import find_all_pdf_sources
 from pdf_storage import PDFMetadata, PDFStorage
+
+
+def _enrich_from_crossref(paper: dict) -> dict:
+    """Best-effort fill of volume/issue/pages/authors/journal/year via Crossref.
+
+    Reference managers want full bibliographic detail; search records often lack
+    volume/issue/pages. Looked up by DOI; returns the paper unchanged on any error.
+    """
+    import requests
+
+    doi = re.sub(r"^https?://(dx\.)?doi\.org/", "", str(paper.get("doi", "")).strip(), flags=re.IGNORECASE)
+    if not doi:
+        return paper
+    if all(str(paper.get(field, "")).strip() for field in ("volume", "issue", "pages")):
+        return paper
+
+    try:
+        response = requests.get(
+            f"https://api.crossref.org/works/{doi}",
+            params={"mailto": "corepapers@streamlit.app"},
+            headers={"User-Agent": "CorePapers/1.0 (mailto:corepapers@streamlit.app)"},
+            timeout=(5, 15),
+        )
+        response.raise_for_status()
+        message = response.json().get("message", {})
+    except Exception:
+        return paper
+
+    enriched = dict(paper)
+
+    def _fill(field: str, value) -> None:
+        if value and not str(enriched.get(field, "")).strip():
+            enriched[field] = str(value)
+
+    _fill("volume", message.get("volume"))
+    _fill("issue", message.get("issue"))
+    _fill("pages", message.get("page"))
+    container = message.get("container-title") or []
+    if container:
+        _fill("journal", container[0])
+    issued = (message.get("issued") or {}).get("date-parts") or [[]]
+    if issued and issued[0]:
+        _fill("year", issued[0][0])
+    if not str(enriched.get("authors", "")).strip():
+        names = [
+            f"{a.get('family', '')}, {a.get('given', '')}".strip().strip(",")
+            for a in (message.get("author") or [])
+            if a.get("family")
+        ]
+        if names:
+            enriched["authors"] = "; ".join(names)
+    return enriched
 
 
 # A realistic browser User-Agent; many OA publisher hosts reject bot-style
@@ -123,6 +176,7 @@ def generate_download_zip(
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         metadata_list = []
+        packaged_papers: list[dict] = []
         successful_downloads = 0
 
         for paper in selected_papers:
@@ -159,6 +213,7 @@ def generate_download_zip(
 
             zip_file.writestr(pdf_filename, content)
             successful_downloads += 1
+            packaged_papers.append(paper)
 
             metadata = PDFMetadata(
                 title=str(paper.get("title", "")),
@@ -190,13 +245,15 @@ def generate_download_zip(
 
             zip_file.writestr("metadata.csv", csv_buffer.getvalue())
 
-            # Add metadata JSON
-            import json
-
-            metadata_json = json.dumps(
-                [m.to_dict() for m in metadata_list], indent=2
-            )
-            zip_file.writestr("metadata.json", metadata_json)
+            # Reference-manager exports (Zotero / EndNote / Mendeley). Enrich
+            # each packaged paper with full bibliographic detail via Crossref.
+            enriched = [_enrich_from_crossref(paper) for paper in packaged_papers]
+            references_df = pd.DataFrame(enriched)
+            try:
+                zip_file.writestr("references.bib", export_to_bibtex(references_df))
+                zip_file.writestr("references.ris", export_to_ris(references_df))
+            except Exception:
+                pass
 
     zip_buffer.seek(0)
     filename = f"corepapers_{topic.replace(' ', '_')}.zip"

@@ -312,7 +312,7 @@ def render_download_button(df: pd.DataFrame, topic: str, email: str) -> None:
 
         if packaged > 0:
             st.success(f"✅ {packaged} PDF(s) packaged — {len(zip_bytes) / 1024 / 1024:.1f} MB")
-            st.caption("Contains the PDFs + metadata.csv + metadata.json")
+            st.caption("Contains the PDFs + metadata.csv + references.bib + references.ris (Zotero/EndNote)")
             st.download_button(
                 label=f"⬇️ Save {filename}",
                 data=zip_bytes,

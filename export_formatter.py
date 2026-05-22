@@ -69,7 +69,14 @@ class BibTexFormatter:
     def _citation_key(self, row: pd.Series, index: int) -> str:
         """Generate citation key from author and year."""
         author = str(row.get("authors", "")).split(";")[0].strip()
-        author_part = author.split()[-1].lower() if author else f"paper{index}"
+        if "," in author:
+            # "Family, Given" -> family name
+            author_part = author.split(",")[0].strip().split()[-1].lower()
+        elif author:
+            # "Given Family" -> last token
+            author_part = author.split()[-1].lower()
+        else:
+            author_part = f"paper{index}"
         year = str(row.get("year", "")).strip()[-4:]  # Last 4 chars
         base_key = f"{author_part}{year}"
 
