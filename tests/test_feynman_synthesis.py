@@ -192,16 +192,26 @@ def _stub_layers_env(monkeypatch) -> None:
     )
 
 
-def test_recall_layer_only_in_deep_and_rare(monkeypatch) -> None:
+def test_recall_layer_present_in_all_modes(monkeypatch) -> None:
     _stub_layers_env(monkeypatch)
 
-    def names(purpose, depth):
-        return [l.name for l in build_search_layers(SearchContext(topic="zz topic", search_purpose=purpose), depth)]
+    def layers(purpose, depth):
+        return build_search_layers(SearchContext(topic="zz topic", search_purpose=purpose), depth)
 
-    assert "LLM-expanded recall" in names(SEARCH_PURPOSE_DEEP, 200)
-    assert "LLM-expanded recall" in names(SEARCH_PURPOSE_RARE, 160)
-    assert "LLM-expanded recall" not in names(SEARCH_PURPOSE_RESEARCH, 130)
-    assert "LLM-expanded recall" not in names(SEARCH_PURPOSE_KNOWLEDGE, 80)
+    for purpose, depth in [
+        (SEARCH_PURPOSE_DEEP, 200),
+        (SEARCH_PURPOSE_RARE, 160),
+        (SEARCH_PURPOSE_RESEARCH, 130),
+        (SEARCH_PURPOSE_KNOWLEDGE, 80),
+    ]:
+        names = [l.name for l in layers(purpose, depth)]
+        assert "LLM-expanded recall" in names, f"missing in {purpose}"
+
+    # precision/speed modes fetch a smaller recall pool than recall-oriented modes
+    def recall_retmax(purpose, depth):
+        return next(l for l in layers(purpose, depth) if l.name == "LLM-expanded recall").retmax
+
+    assert recall_retmax(SEARCH_PURPOSE_KNOWLEDGE, 80) < recall_retmax(SEARCH_PURPOSE_DEEP, 200)
 
 
 def test_recall_layer_ors_expansion_terms(monkeypatch) -> None:

@@ -824,6 +824,25 @@ def build_search_layers(
         for clause in (pubmed_term_clause(term, "Title/Abstract") for term in recall_expansion_terms)
         if clause
     ]
+    # LLM query expansion runs in EVERY mode: a dedicated recall layer that ORs
+    # the expansion union with no publication-type filter. Recall-oriented modes
+    # (Deep/Rare) fetch a larger pool; precision/speed modes (Learning/Research)
+    # use a smaller cap so they stay fast. The recall-dilution guard and topic
+    # gate keep tangential hits from crowding out top-tier evidence.
+    if len(recall_expansion_clauses) >= 2:
+        recall_retmax = (
+            max(candidate_depth, 150)
+            if purpose in {SEARCH_PURPOSE_DEEP, SEARCH_PURPOSE_RARE}
+            else max(60, candidate_depth // 2)
+        )
+        layers.append(
+            SearchLayer(
+                name="LLM-expanded recall",
+                purpose="LLM/profile-derived synonyms, eponyms, components, parent topics, and mechanisms ORed to catch literature indexed under alternate terminology.",
+                query=f"({' OR '.join(recall_expansion_clauses)})",
+                retmax=recall_retmax,
+            )
+        )
 
     if purpose == SEARCH_PURPOSE_DEEP:
         layers.insert(
@@ -844,16 +863,6 @@ def build_search_layers(
                 retmax=max(candidate_depth // 2, 100),
             ),
         )
-        if len(recall_expansion_clauses) >= 2:
-            layers.insert(
-                2,
-                SearchLayer(
-                    name="LLM-expanded recall",
-                    purpose="Deep-mode exhaustive recall: OR of LLM/profile-derived synonyms, components, parent topics, and mechanisms to catch literature indexed under alternate terminology.",
-                    query=f"({' OR '.join(recall_expansion_clauses)})",
-                    retmax=max(candidate_depth, 150),
-                ),
-            )
     if purpose == SEARCH_PURPOSE_RARE:
         rare_clause = (
             '"case reports"[Publication Type] OR "case report" OR "case series" OR '
@@ -879,16 +888,6 @@ def build_search_layers(
                 retmax=max(candidate_depth // 2, 100),
             ),
         )
-        if len(recall_expansion_clauses) >= 2:
-            layers.insert(
-                2,
-                SearchLayer(
-                    name="LLM-expanded recall",
-                    purpose="Rare-mode recall: OR of LLM/profile-derived synonyms, eponyms, aliases, components, and parent topics to surface scattered case reports indexed under alternate terminology.",
-                    query=f"({' OR '.join(recall_expansion_clauses)})",
-                    retmax=max(candidate_depth, 150),
-                ),
-            )
     return layers
 
 
