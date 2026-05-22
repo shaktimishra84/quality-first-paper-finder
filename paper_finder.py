@@ -827,6 +827,32 @@ def build_search_layers(
                 retmax=max(candidate_depth // 2, 100),
             ),
         )
+        # Deep-mode LLM query expansion: OR the full union of LLM/profile-derived
+        # synonyms, components, parent topics, and mechanisms (uncapped beyond a
+        # sane ceiling, no publication-type filter) to maximise recall on
+        # literature indexed under alternate terminology. Hits still pass the
+        # downstream topic gate, verification, and tier-aware scoring.
+        deep_expansion_terms = clean_term_list(
+            list(semantic_terms.get("synonym", []))
+            + list(semantic_terms.get("component", []))
+            + list(semantic_terms.get("parent", []))
+            + list(semantic_terms.get("mechanism", []))
+        )[:24]
+        deep_expansion_clauses = [
+            clause
+            for clause in (pubmed_term_clause(term, "Title/Abstract") for term in deep_expansion_terms)
+            if clause
+        ]
+        if len(deep_expansion_clauses) >= 2:
+            layers.insert(
+                2,
+                SearchLayer(
+                    name="LLM-expanded recall",
+                    purpose="Deep-mode exhaustive recall: OR of LLM/profile-derived synonyms, components, parent topics, and mechanisms to catch literature indexed under alternate terminology.",
+                    query=f"({' OR '.join(deep_expansion_clauses)})",
+                    retmax=max(candidate_depth, 150),
+                ),
+            )
     if purpose == SEARCH_PURPOSE_RARE:
         rare_clause = (
             '"case reports"[Publication Type] OR "case report" OR "case series" OR '

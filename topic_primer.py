@@ -26,6 +26,8 @@ from typing import Any
 
 import requests
 
+from evidence_engine import GEMINI_API_BASE, resolve_gemini_model
+
 logger = logging.getLogger(__name__)
 
 GEMINI_MODEL = "gemini-2.0-flash"
@@ -239,7 +241,10 @@ GEMINI_RESPONSE_SCHEMA = {
 
 def _call_gemini(topic: str, gemini_key: str) -> dict[str, Any]:
     """POST a single request to Gemini Flash and return the parsed JSON payload."""
-    url = f"{GEMINI_ENDPOINT}?key={gemini_key}"
+    # Resolve a live generateContent-capable model so a retired hardcoded model
+    # name (e.g. a 404 on gemini-2.0-flash) does not silently disable priming.
+    model = resolve_gemini_model(gemini_key)
+    url = f"{GEMINI_API_BASE}/models/{model}:generateContent?key={gemini_key}"
     body = {
         "system_instruction": {"parts": [{"text": PROMPT_INSTRUCTIONS}]},
         "contents": [{"parts": [{"text": f"Topic: {topic}"}]}],
