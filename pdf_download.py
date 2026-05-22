@@ -45,25 +45,45 @@ def _looks_like_html(content: bytes, content_type: str) -> bool:
     return head.startswith(b"<!doctype html") or b"<html" in head
 
 
+def _http_get(url: str, headers: dict):
+    """GET with retry/backoff on transient failures (throttling, 5xx).
+
+    OA hosts (especially Europe PMC) drop connections under rapid bulk
+    fetching; a couple of retries recovers most of those.
+    """
+    import time
+
+    import requests
+
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                url, headers=headers, timeout=(5, 30), allow_redirects=True
+            )
+        except Exception:
+            time.sleep(1.0 * (attempt + 1))
+            continue
+        if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+            time.sleep(1.0 * (attempt + 1))
+            continue
+        return response
+    return None
+
+
 def _fetch_pdf_bytes(url: str, referer: Optional[str] = None, _depth: int = 0) -> Optional[bytes]:
     """Fetch a URL and return its bytes only if it is a genuine PDF.
 
     If the URL returns an OA landing page, follow its declared
     citation_pdf_url once to reach the actual PDF.
     """
-    import requests
-
     headers = dict(BROWSER_HEADERS)
     if referer:
         headers["Referer"] = referer
 
+    response = _http_get(url, headers)
+    if response is None:
+        return None
     try:
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=(5, 30),
-            allow_redirects=True,
-        )
         response.raise_for_status()
     except Exception:
         return None

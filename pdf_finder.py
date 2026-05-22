@@ -174,30 +174,20 @@ def _check_pmc_oa_pmid(pmid: str) -> PDFSearchResult:
                             # The id value may already include the "PMC" prefix;
                             # strip it so we don't build a "PMCPMC..." URL.
                             pmcid_num = pmcid.upper().replace("PMC", "")
-                            # Europe PMC's OA render endpoint returns the PDF
-                            # bytes programmatically and is far more reliable
-                            # than NCBI's /pdf/ page, which blocks server
-                            # downloads. Keep the NCBI URL as a fallback.
-                            sources = [
-                                PDFSource(
-                                    url=(
-                                        "https://europepmc.org/backend/ptpmcrender.fcgi"
-                                        f"?accid=PMC{pmcid_num}&blobtype=pdf"
-                                    ),
-                                    source="Europe PMC (OA render)",
-                                    license="Open access (PMC)",
-                                    is_best_oa=True,
-                                ),
-                                PDFSource(
-                                    url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmcid_num}/pdf/",
-                                    source="PubMed Central OA",
-                                    license="Public domain (PMC)",
-                                ),
-                            ]
+                            # Europe PMC's article render endpoint serves the
+                            # PDF bytes (redirecting to api/getPdf). NCBI's
+                            # /pdf/ page only returns an HTML interstitial to
+                            # server clients, so it is not used.
+                            source = PDFSource(
+                                url=f"https://europepmc.org/articles/PMC{pmcid_num}?pdf=render",
+                                source="Europe PMC (OA render)",
+                                license="Open access (PMC)",
+                                is_best_oa=True,
+                            )
                             return PDFSearchResult(
                                 has_pdf=True,
-                                sources=sources,
-                                best_source=sources[0],
+                                sources=[source],
+                                best_source=source,
                                 oa_status="gold",
                                 message="PMC OA PDF available",
                             )
@@ -249,8 +239,7 @@ def _check_europe_pmc_pmid(pmid: str) -> PDFSearchResult:
                 if pmcid:
                     pmcid_num = str(pmcid).upper().replace("PMC", "")
                     pdf_urls.append(
-                        "https://europepmc.org/backend/ptpmcrender.fcgi"
-                        f"?accid=PMC{pmcid_num}&blobtype=pdf"
+                        f"https://europepmc.org/articles/PMC{pmcid_num}?pdf=render"
                     )
                 if result.get("fullTextLink"):
                     pdf_urls.append(result["fullTextLink"])
@@ -462,7 +451,7 @@ def _source_fetch_rank(source: PDFSource) -> int:
     """Order sources by how reliably they serve a PDF to a server fetch."""
     name = (source.source or "").lower()
     url = (source.url or "").lower()
-    if "ptpmcrender" in url or "oa render" in name:
+    if "pdf=render" in url or "oa render" in name:
         return 0
     if "pubmed central" in name:
         return 1
@@ -503,6 +492,23 @@ def find_all_pdf_sources(
         result = _check_openalex_doi(doi)
         if result.has_pdf:
             collected.extend(result.sources or [])
+
+    # Any PMC id surfaced by any resolver (e.g. an ncbi.nlm.nih.gov article URL
+    # that blocks bots) can be fetched via Europe PMC's render endpoint, which
+    # serves the PDF directly. Inject those as high-priority sources.
+    pmc_render: list[PDFSource] = []
+    for source in collected:
+        match = re.search(r"PMC(\d+)", source.url or "", re.IGNORECASE)
+        if match:
+            pmc_render.append(
+                PDFSource(
+                    url=f"https://europepmc.org/articles/PMC{match.group(1)}?pdf=render",
+                    source="Europe PMC (OA render)",
+                    license="Open access (PMC)",
+                    is_best_oa=True,
+                )
+            )
+    collected = pmc_render + collected
 
     seen: set[str] = set()
     unique: list[PDFSource] = []
