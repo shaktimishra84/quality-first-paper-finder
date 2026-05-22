@@ -1063,7 +1063,7 @@ def main() -> None:
         render_tier_groups(df, full_df, tiers=(3, 4), allow_select_all=False)
 
     with tabs[3]:
-        render_evidence_review(result)
+        render_evidence_review(result, gemini_api_key)
 
     with tabs[4]:
         render_expected_papers(result)
@@ -1864,12 +1864,42 @@ def render_knowledge_summary(summary: dict) -> None:
             st.markdown(f"- {line}")
 
 
-def render_evidence_review(result: dict) -> None:
-    review = result.get("evidence_review") or build_evidence_review(result)
-    verification = review.get("verification", {}) or {}
-
+def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
     st.subheader("Medical Evidence Review")
     st.caption("Structured synthesis with source IDs, evidence hierarchy, verification caveats, and gaps.")
+
+    enable_ai = False
+    if gemini_api_key:
+        enable_ai = st.checkbox(
+            "Add AI evidence synthesis (Gemini, source-grounded)",
+            value=st.session_state.get("evidence_ai_enabled", False),
+            key="evidence_ai_enabled",
+            help=(
+                "Adds a narrative synthesis and research-gap hypotheses grounded "
+                "only in the verified sources below. Research synthesis, not medical advice."
+            ),
+        )
+    else:
+        st.caption("Add a `gemini_api_key` secret to enable optional AI evidence synthesis.")
+
+    if enable_ai:
+        cache_key = (st.session_state.get("last_topic", ""), len(result.get("papers", [])))
+        cached = st.session_state.get("_ai_review_cache") or {}
+        if cached.get("key") == cache_key and cached.get("review"):
+            review = cached["review"]
+        else:
+            with st.spinner("Synthesizing verified evidence with Gemini..."):
+                review = build_evidence_review(
+                    result,
+                    gemini_key=gemini_api_key,
+                    generate_ai_gaps=True,
+                    generate_ai_synthesis=True,
+                )
+            st.session_state["_ai_review_cache"] = {"key": cache_key, "review": review}
+    else:
+        review = result.get("evidence_review") or build_evidence_review(result)
+
+    verification = review.get("verification", {}) or {}
 
     render_mini_stats(
         [
@@ -2007,6 +2037,72 @@ def render_evidence_review(result: dict) -> None:
                         "limitations": st.column_config.TextColumn("Limitations", width="medium"),
                     },
                 )
+
+    ai_synthesis = review.get("ai_synthesis", {}) or {}
+    synthesis_has_content = bool(
+        ai_synthesis.get("executive_summary") or ai_synthesis.get("themes")
+    )
+    if ai_synthesis.get("status") not in {None, "", "not_requested"}:
+        with st.expander("AI evidence synthesis", expanded=synthesis_has_content):
+            status = ai_synthesis.get("status", "")
+            if status == "generated":
+                st.caption(ai_synthesis.get("note", "Source-grounded AI evidence synthesis."))
+            else:
+                st.caption(ai_synthesis.get("note", status))
+
+            if ai_synthesis.get("executive_summary"):
+                st.markdown("**Executive summary**")
+                st.markdown(ai_synthesis["executive_summary"])
+
+            themes = ai_synthesis.get("themes", []) or []
+            if themes:
+                theme_df = pd.DataFrame(themes)
+                theme_df["source_ids"] = theme_df["source_ids"].apply(
+                    lambda values: ", ".join(values) if isinstance(values, list) else str(values)
+                )
+                if "is_inference" in theme_df.columns:
+                    theme_df["is_inference"] = theme_df["is_inference"].apply(
+                        lambda flag: "Inference" if flag else "Direct"
+                    )
+                st.markdown("**Themes**")
+                st.dataframe(
+                    theme_df[
+                        ["theme", "summary", "strength_of_evidence", "is_inference", "source_ids"]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "theme": st.column_config.TextColumn("Theme", width="medium"),
+                        "summary": st.column_config.TextColumn("Summary", width="large"),
+                        "strength_of_evidence": st.column_config.TextColumn("Evidence", width="small"),
+                        "is_inference": st.column_config.TextColumn("Basis", width="small"),
+                        "source_ids": st.column_config.TextColumn("Sources", width="small"),
+                    },
+                )
+
+            agreements = ai_synthesis.get("agreements", []) or []
+            conflicts = ai_synthesis.get("conflicts", []) or []
+            agree_col, conflict_col = st.columns(2)
+            with agree_col:
+                st.markdown("**Areas of agreement**")
+                if not agreements:
+                    st.caption("None identified.")
+                for item in agreements[:8]:
+                    sources = ", ".join(item.get("source_ids", []) or [])
+                    st.markdown(f"- {item.get('statement', '')} _({sources or 'n/a'})_")
+            with conflict_col:
+                st.markdown("**Conflicting / divergent evidence**")
+                if not conflicts:
+                    st.caption("None identified.")
+                for item in conflicts[:8]:
+                    sources = ", ".join(item.get("source_ids", []) or [])
+                    st.markdown(f"- {item.get('statement', '')} _({sources or 'n/a'})_")
+
+            uncertainties = ai_synthesis.get("uncertainties", []) or []
+            if uncertainties:
+                st.markdown("**Open uncertainties**")
+                for item in uncertainties[:10]:
+                    st.markdown(f"- {item}")
 
     with st.expander("Workflow and prompt pattern adapted from Feynman", expanded=False):
         for item in review.get("workflow", []):

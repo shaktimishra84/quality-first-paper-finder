@@ -94,6 +94,7 @@ GEMINI_ENDPOINT = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 )
 GAP_SYNTHESIS_TIMEOUT_S = 35
+EVIDENCE_SYNTHESIS_TIMEOUT_S = 50
 
 
 def build_evidence_review(
@@ -101,6 +102,7 @@ def build_evidence_review(
     max_sources: int = 80,
     gemini_key: str = "",
     generate_ai_gaps: bool = False,
+    generate_ai_synthesis: bool = False,
 ) -> dict[str, Any]:
     """Build a structured biomedical review artifact from a search result."""
     papers = [paper for paper in result.get("papers", []) if _is_review_eligible(paper)]
@@ -136,11 +138,21 @@ def build_evidence_review(
         "gaps": gaps,
         "limitations": limitations,
         "ai_gap_synthesis": {"status": "not_requested", "items": []},
+        "ai_synthesis": {
+            "status": "not_requested",
+            "executive_summary": "",
+            "themes": [],
+            "agreements": [],
+            "conflicts": [],
+            "uncertainties": [],
+        },
         "sources": source_records,
         "license_notice": FEYNMAN_MIT_NOTICE,
     }
     if generate_ai_gaps:
         report["ai_gap_synthesis"] = generate_ai_gap_synthesis(report, gemini_key)
+    if generate_ai_synthesis:
+        report["ai_synthesis"] = generate_ai_evidence_synthesis(report, gemini_key)
     report["markdown"] = evidence_review_to_markdown(report)
     return report
 
@@ -240,6 +252,48 @@ def evidence_review_to_markdown(review: dict[str, Any]) -> str:
                     rationale=item.get("rationale", ""),
                 )
             )
+
+    ai_synthesis = review.get("ai_synthesis", {}) or {}
+    synthesis_has_content = bool(
+        ai_synthesis.get("executive_summary") or ai_synthesis.get("themes")
+    )
+    if synthesis_has_content or ai_synthesis.get("status") not in {"", None, "not_requested"}:
+        lines.extend(["", "## AI-Assisted Evidence Synthesis"])
+        status = ai_synthesis.get("status", "")
+        if status and status != "generated":
+            lines.append(f"Status: {status}")
+        if ai_synthesis.get("note"):
+            lines.append(str(ai_synthesis["note"]))
+        if ai_synthesis.get("executive_summary"):
+            lines.extend(["", "### Executive Summary", str(ai_synthesis["executive_summary"])])
+        themes = ai_synthesis.get("themes", []) or []
+        if themes:
+            lines.extend(["", "### Themes"])
+            for theme in themes:
+                sources = ", ".join(theme.get("source_ids", []) or [])
+                inferred = " _(inference)_" if theme.get("is_inference") else ""
+                heading = theme.get("theme") or "Theme"
+                lines.append(
+                    f"- **{heading}** (evidence: {theme.get('strength_of_evidence', 'low')})"
+                    f"{inferred}. Sources: {sources or 'n/a'}. {theme.get('summary', '')}"
+                )
+        agreements = ai_synthesis.get("agreements", []) or []
+        if agreements:
+            lines.extend(["", "### Areas of Agreement"])
+            for item in agreements:
+                sources = ", ".join(item.get("source_ids", []) or [])
+                lines.append(f"- {item.get('statement', '')} (Sources: {sources or 'n/a'})")
+        conflicts = ai_synthesis.get("conflicts", []) or []
+        if conflicts:
+            lines.extend(["", "### Conflicting or Divergent Evidence"])
+            for item in conflicts:
+                sources = ", ".join(item.get("source_ids", []) or [])
+                lines.append(f"- {item.get('statement', '')} (Sources: {sources or 'n/a'})")
+        uncertainties = ai_synthesis.get("uncertainties", []) or []
+        if uncertainties:
+            lines.extend(["", "### Open Uncertainties"])
+            for item in uncertainties:
+                lines.append(f"- {item}")
 
     lines.extend(["", "## Limitations and Uncertainty"])
     for item in review.get("limitations", []) or []:
@@ -392,6 +446,222 @@ def generate_ai_gap_synthesis(review: dict[str, Any], gemini_key: str) -> dict[s
         "status": "generated" if items else "blocked",
         "items": items,
         "note": "AI gap hypotheses cite source IDs from the verified result set only.",
+    }
+
+
+def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> dict[str, Any]:
+    """Generate a grounded narrative synthesis of the retrieved literature.
+
+    Adapts Feynman's writer + verifier agent integrity model: the LLM may only
+    synthesize from source metadata already admitted by the deterministic
+    pipeline. It cannot add papers, citations, statistics, or recommendations.
+    Every claim must cite at least one verified source_id, disagreement is
+    preserved, and inferences are labelled rather than stated as fact.
+    """
+    if not gemini_key:
+        return {
+            "status": "not_configured",
+            "executive_summary": "",
+            "themes": [],
+            "agreements": [],
+            "conflicts": [],
+            "uncertainties": [],
+            "note": "Add a Gemini API key to enable source-grounded AI evidence synthesis.",
+        }
+
+    sources = [
+        {
+            "source_id": source.get("source_id"),
+            "title": source.get("title"),
+            "journal": source.get("journal"),
+            "year": source.get("year"),
+            "study_design": source.get("study_design"),
+            "evidence_type": source.get("evidence_type"),
+            "tier": source.get("tier"),
+            "why_matters": source.get("why_matters"),
+            "key_role": source.get("key_role"),
+            "confidence": source.get("confidence"),
+            "caveats": source.get("caveats"),
+        }
+        for source in (review.get("sources", []) or [])[:40]
+    ]
+    if not sources:
+        return {
+            "status": "blocked",
+            "executive_summary": "",
+            "themes": [],
+            "agreements": [],
+            "conflicts": [],
+            "uncertainties": [],
+            "note": "No verified sources were available for AI evidence synthesis.",
+        }
+
+    citing_item = {
+        "type": "OBJECT",
+        "properties": {
+            "statement": {"type": "STRING"},
+            "source_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
+        },
+        "required": ["statement", "source_ids"],
+    }
+    schema = {
+        "type": "OBJECT",
+        "properties": {
+            "executive_summary": {"type": "STRING"},
+            "themes": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "theme": {"type": "STRING"},
+                        "summary": {"type": "STRING"},
+                        "source_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
+                        "strength_of_evidence": {"type": "STRING"},
+                        "is_inference": {"type": "BOOLEAN"},
+                    },
+                    "required": ["theme", "summary", "source_ids", "strength_of_evidence"],
+                },
+            },
+            "agreements": {"type": "ARRAY", "items": citing_item},
+            "conflicts": {"type": "ARRAY", "items": citing_item},
+            "uncertainties": {"type": "ARRAY", "items": {"type": "STRING"}},
+        },
+        "required": ["executive_summary", "themes"],
+    }
+    system = (
+        "You are a biomedical evidence synthesist. Write a faithful narrative "
+        "synthesis of the literature using ONLY the provided source IDs and "
+        "metadata. Integrity rules: (1) Never introduce a paper, statistic, "
+        "effect size, p-value, or claim that is not present in the supplied "
+        "sources. (2) Every theme, agreement, and conflict must cite at least "
+        "one provided source_id; do not cite IDs that were not provided. "
+        "(3) Preserve uncertainty and disagreement between studies — never "
+        "smooth it away. (4) Set is_inference=true for any statement that is "
+        "your own synthesis across sources rather than directly supported by a "
+        "single source's metadata. (5) Do NOT give patient-specific medical "
+        "advice, dosing, or treatment recommendations; describe what the "
+        "evidence shows, not what a clinician should do. (6) strength_of_evidence "
+        "must be one of: high, moderate, low, very low — based on the evidence "
+        "type and tier of the citing sources. (7) When the supplied metadata is "
+        "insufficient to support a claim, omit the claim rather than guessing. "
+        "This is research synthesis, not medical advice."
+    )
+    body = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": (
+                            "Review question and verified source metadata:\n"
+                            + _jsonish(
+                                {
+                                    "question": review.get("question", {}),
+                                    "evidence_hierarchy": review.get("evidence_hierarchy", []),
+                                    "deterministic_gaps": review.get("gaps", []),
+                                    "limitations": review.get("limitations", []),
+                                    "sources": sources,
+                                }
+                            )
+                        )
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "response_schema": schema,
+            "temperature": 0.2,
+        },
+    }
+
+    try:
+        response = requests.post(
+            f"{GEMINI_ENDPOINT}?key={gemini_key}",
+            json=body,
+            timeout=EVIDENCE_SYNTHESIS_TIMEOUT_S,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        candidates = payload.get("candidates") or []
+        parts = candidates[0].get("content", {}).get("parts") if candidates else []
+        raw_text = "".join(part.get("text", "") for part in parts or [] if isinstance(part, dict))
+        parsed = json.loads(raw_text)
+    except Exception as exc:
+        return {
+            "status": "blocked",
+            "executive_summary": "",
+            "themes": [],
+            "agreements": [],
+            "conflicts": [],
+            "uncertainties": [],
+            "note": f"AI evidence synthesis could not be completed: {str(exc)[:160]}",
+        }
+
+    if not isinstance(parsed, dict):
+        parsed = {}
+    valid_source_ids = {source["source_id"] for source in sources if source.get("source_id")}
+
+    def _clean_ids(values: Any) -> list[str]:
+        return [str(value) for value in (values or []) if str(value) in valid_source_ids]
+
+    def _citing_list(values: Any) -> list[dict[str, Any]]:
+        cleaned: list[dict[str, Any]] = []
+        for raw in values or []:
+            if not isinstance(raw, dict):
+                continue
+            source_ids = _clean_ids(raw.get("source_ids"))
+            statement = str(raw.get("statement", "") or "").strip()
+            if not statement or not source_ids:
+                continue
+            cleaned.append({"statement": statement, "source_ids": source_ids[:6]})
+            if len(cleaned) >= 12:
+                break
+        return cleaned
+
+    themes: list[dict[str, Any]] = []
+    for raw in parsed.get("themes", []) if isinstance(parsed.get("themes"), list) else []:
+        if not isinstance(raw, dict):
+            continue
+        source_ids = _clean_ids(raw.get("source_ids"))
+        summary = str(raw.get("summary", "") or "").strip()
+        theme = str(raw.get("theme", "") or "").strip()
+        if not source_ids or not (summary or theme):
+            continue
+        strength = str(raw.get("strength_of_evidence", "low") or "low").lower()
+        if strength not in {"high", "moderate", "low", "very low"}:
+            strength = "low"
+        themes.append(
+            {
+                "theme": theme,
+                "summary": summary,
+                "source_ids": source_ids[:8],
+                "strength_of_evidence": strength,
+                "is_inference": bool(raw.get("is_inference", False)),
+            }
+        )
+        if len(themes) >= 10:
+            break
+
+    executive_summary = str(parsed.get("executive_summary", "") or "").strip()
+    uncertainties = [
+        str(item).strip()
+        for item in (parsed.get("uncertainties", []) or [])
+        if str(item).strip()
+    ][:10]
+
+    has_content = bool(executive_summary or themes)
+    return {
+        "status": "generated" if has_content else "blocked",
+        "executive_summary": executive_summary,
+        "themes": themes,
+        "agreements": _citing_list(parsed.get("agreements")),
+        "conflicts": _citing_list(parsed.get("conflicts")),
+        "uncertainties": uncertainties,
+        "note": (
+            "AI synthesis cites source IDs from the verified result set only. "
+            "Research synthesis, not medical advice."
+        ),
     }
 
 
