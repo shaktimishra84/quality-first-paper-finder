@@ -34,8 +34,10 @@ def _patch_sheets(monkeypatch) -> dict[str, _FakeWS]:
 
 
 def test_not_configured_without_credentials_or_sheet() -> None:
-    assert search_logger.log_search({}, {}, None, sheet_id="X") == "not_configured"
-    assert search_logger.log_search({}, {}, {"client_email": "a"}, sheet_id="", sheet_name="") == "not_configured"
+    assert search_logger.log_search({}, {}, None, sheet_id="X").startswith("not_configured")
+    assert search_logger.log_search(
+        {}, {}, {"client_email": "a"}, sheet_id="", sheet_name=""
+    ).startswith("not_configured")
 
 
 def test_logs_search_row_and_paper_rows(monkeypatch) -> None:

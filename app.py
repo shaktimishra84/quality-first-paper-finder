@@ -1002,32 +1002,41 @@ def main() -> None:
             )
         # Auto-log every search to persistent storage for later analysis.
         # Fail-soft: never let logging break the search flow.
+        service_account = None
+        sa_parse_error = ""
         try:
-            service_account = st.secrets.get("gcp_service_account")
-            if isinstance(service_account, str):
-                # Allow pasting the whole service-account JSON as one string.
-                service_account = json.loads(service_account)
-            elif service_account:
-                service_account = dict(service_account)
-            else:
-                service_account = None
+            raw_service_account = st.secrets.get("gcp_service_account")
         except Exception:
-            service_account = None
-        st.session_state["search_log_status"] = log_search(
-            result,
-            {
-                "topic": context.topic,
-                "search_purpose": context.search_purpose,
-                "question_type": context.question_type,
-                "population": context.population,
-                "intervention": context.intervention,
-                "comparator": context.comparator,
-                "outcome": context.outcome,
-            },
-            service_account,
-            sheet_id=app_secret("feedback_sheet_id"),
-            sheet_name=app_secret("feedback_sheet_name"),
-        )
+            raw_service_account = None
+        if isinstance(raw_service_account, str):
+            try:
+                # Allow pasting the whole service-account JSON as one string.
+                service_account = json.loads(raw_service_account)
+            except Exception as exc:
+                sa_parse_error = f"error: service-account JSON didn't parse ({str(exc)[:80]})"
+        elif raw_service_account:
+            try:
+                service_account = dict(raw_service_account)
+            except Exception:
+                sa_parse_error = "error: service-account secret is malformed"
+        if sa_parse_error:
+            st.session_state["search_log_status"] = sa_parse_error
+        else:
+            st.session_state["search_log_status"] = log_search(
+                result,
+                {
+                    "topic": context.topic,
+                    "search_purpose": context.search_purpose,
+                    "question_type": context.question_type,
+                    "population": context.population,
+                    "intervention": context.intervention,
+                    "comparator": context.comparator,
+                    "outcome": context.outcome,
+                },
+                service_account,
+                sheet_id=app_secret("feedback_sheet_id"),
+                sheet_name=app_secret("feedback_sheet_name"),
+            )
         st.session_state["result"] = result
         st.session_state["last_topic"] = context.topic
         st.rerun()
@@ -1048,7 +1057,10 @@ def main() -> None:
     if log_status == "logged":
         st.caption("📝 Search input and full results logged for later analysis.")
     elif isinstance(log_status, str) and log_status.startswith("error:"):
-        st.caption(f"⚠️ Feedback logging failed — {log_status[7:].strip()}")
+        st.caption(f"⚠️ Feedback logging failed — {log_status[len('error:'):].strip()}")
+    elif isinstance(log_status, str) and log_status.startswith("not_configured"):
+        detail = log_status.split(":", 1)[1].strip() if ":" in log_status else "not set up"
+        st.caption(f"ℹ️ Feedback logging is off — {detail}.")
     render_empty_source_state(result, df)
     render_metrics(result, df, topic)
     render_missing_landmarks(result)

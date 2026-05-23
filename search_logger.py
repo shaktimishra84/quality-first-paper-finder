@@ -134,8 +134,10 @@ def log_search(
     Returns a short status string: ``"logged"``, ``"not_configured"``, or
     ``"error: ..."``. Never raises.
     """
-    if not service_account_info or not (sheet_id or sheet_name):
-        return "not_configured"
+    if not service_account_info:
+        return "not_configured: no service-account credentials found in secrets"
+    if not (sheet_id or sheet_name):
+        return "not_configured: feedback_sheet_id is missing from secrets"
 
     try:
         papers = list(result.get("papers", []) or [])
