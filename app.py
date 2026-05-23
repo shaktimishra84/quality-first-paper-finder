@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from evidence_engine import build_evidence_review, evidence_review_to_markdown
+from search_logger import log_search
 from export_formatter import export_to_bibtex, export_to_ris, export_to_json
 from paper_finder import (
     SEARCH_PURPOSE_DEEP,
@@ -999,6 +1000,28 @@ def main() -> None:
                 state="complete",
                 expanded=False,
             )
+        # Auto-log every search to persistent storage for later analysis.
+        # Fail-soft: never let logging break the search flow.
+        try:
+            service_account = st.secrets.get("gcp_service_account")
+            service_account = dict(service_account) if service_account else None
+        except Exception:
+            service_account = None
+        st.session_state["search_log_status"] = log_search(
+            result,
+            {
+                "topic": context.topic,
+                "search_purpose": context.search_purpose,
+                "question_type": context.question_type,
+                "population": context.population,
+                "intervention": context.intervention,
+                "comparator": context.comparator,
+                "outcome": context.outcome,
+            },
+            service_account,
+            sheet_id=app_secret("feedback_sheet_id"),
+            sheet_name=app_secret("feedback_sheet_name"),
+        )
         st.session_state["result"] = result
         st.session_state["last_topic"] = context.topic
         st.rerun()
@@ -1015,6 +1038,11 @@ def main() -> None:
 
     topic = st.session_state.get("last_topic", "")
     render_results_header(result, df, topic)
+    log_status = st.session_state.get("search_log_status", "")
+    if log_status == "logged":
+        st.caption("📝 Search input and full results logged for later analysis.")
+    elif isinstance(log_status, str) and log_status.startswith("error:"):
+        st.caption(f"⚠️ Feedback logging failed — {log_status[7:].strip()}")
     render_empty_source_state(result, df)
     render_metrics(result, df, topic)
     render_missing_landmarks(result)
