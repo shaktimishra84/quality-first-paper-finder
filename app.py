@@ -1004,7 +1004,13 @@ def main() -> None:
         # Fail-soft: never let logging break the search flow.
         try:
             service_account = st.secrets.get("gcp_service_account")
-            service_account = dict(service_account) if service_account else None
+            if isinstance(service_account, str):
+                # Allow pasting the whole service-account JSON as one string.
+                service_account = json.loads(service_account)
+            elif service_account:
+                service_account = dict(service_account)
+            else:
+                service_account = None
         except Exception:
             service_account = None
         st.session_state["search_log_status"] = log_search(
