@@ -24,6 +24,8 @@ from topic_primer import TopicPrimer, prime_topic
 
 
 TOPICS_DIR = Path(__file__).resolve().parent / "topics"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+BUNDLED_QUARTILE_PATH = DATA_DIR / "journal_quartiles.csv"
 
 
 PUBMED_SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -1112,7 +1114,9 @@ def run_quality_first_search(
     accepted = [paper for paper in deduped if is_verified(paper)]
     rejected = [paper for paper in deduped if not is_verified(paper)]
 
-    quartile_overrides = quartile_overrides or {}
+    # Start from the bundled SCImago quartile table; any user-uploaded overrides
+    # win on conflict.
+    quartile_overrides = {**load_bundled_quartiles(), **(quartile_overrides or {})}
     enrichment_candidates = rank_for_enrichment(accepted, context, quartile_overrides)
     enrichment_candidates = enrichment_candidates[: max(0, enrichment_limit)]
 
@@ -5028,9 +5032,52 @@ def parse_quartile_overrides(csv_text: str) -> dict[str, dict[str, str]]:
     return overrides
 
 
+@functools.lru_cache(maxsize=1)
+def load_bundled_quartiles() -> dict[str, dict[str, str]]:
+    """Load the repo-bundled SCImago quartile table (best quartile per journal).
+
+    Returns the same shape as parse_quartile_overrides; empty if the file is
+    missing so the app still runs without it.
+    """
+    if not BUNDLED_QUARTILE_PATH.is_file():
+        return {}
+    try:
+        return parse_quartile_overrides(BUNDLED_QUARTILE_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return {}
+
+
+# Trailing location/edition tokens PubMed appends to journal names. Stripping
+# them lets "Lancet (London, England)" match SCImago's "The Lancet".
+_JOURNAL_SUFFIX_RE = re.compile(
+    r"\s+(london england|new york n y|baltimore md|engl ed|englated|england|n y)$"
+)
+
+
+def quartile_query_keys(journal: str) -> list[str]:
+    """Normalized lookup variants for a journal name, to bridge formatting
+    differences between PubMed and SCImago (leading 'the', location suffixes)."""
+    base = normalize_journal(journal)
+    if not base:
+        return []
+    keys = [base]
+    if base.startswith("the "):
+        keys.append(base[4:])
+    else:
+        keys.append(f"the {base}")
+    stripped = _JOURNAL_SUFFIX_RE.sub("", base).strip()
+    if stripped and stripped != base:
+        keys.append(stripped)
+        keys.append(stripped[4:] if stripped.startswith("the ") else f"the {stripped}")
+    return list(dict.fromkeys(key for key in keys if key))
+
+
 def lookup_quartile(journal: str, overrides: dict[str, dict[str, str]]) -> dict[str, str]:
-    key = normalize_journal(journal)
-    return overrides.get(key, {"quartile": "quartile not verified", "source": "quartile not verified"})
+    for key in quartile_query_keys(journal):
+        match = overrides.get(key)
+        if match:
+            return match
+    return {"quartile": "quartile not verified", "source": "quartile not verified"}
 
 
 def verification_label(paper: dict[str, Any]) -> str:
