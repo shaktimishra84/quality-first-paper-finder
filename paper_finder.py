@@ -3211,7 +3211,11 @@ def semantic_topic_terms(topic: str, profile: dict[str, Any] | None = None) -> d
     component_variants = semantic_variants_for_components(components)
     direct_terms = [topic_phrase]
     direct_terms.extend(str(term).lower() for term in profile.get("direct_phrases", []) if term)
-    direct_terms.extend(str(term).lower() for term in profile.get("direct_acronyms", []) if term)
+    # NOTE: acronyms are deliberately NOT treated as direct full-concept terms.
+    # A bare acronym hit (e.g. "HPS" = Hantavirus Pulmonary Syndrome) collides
+    # with unrelated titles (e.g. a "GreenLight HPS laser" paper). Acronyms only
+    # match via the contextual-acronym path (require a topical anchor nearby) and
+    # as synonyms (gated by component presence).
     synonym_terms = []
     synonym_terms.extend(str(term).lower() for term in profile.get("direct_synonyms", []) if term)
     synonym_terms.extend(str(term).lower() for term in profile.get("query_expansion_terms", []) if term)

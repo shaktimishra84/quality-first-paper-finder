@@ -118,6 +118,16 @@ class TopicPrimer:
             "parallel_topics": list(self.parallel_topics),
             "mechanism_terms": list(self.mechanism_terms),
             "direct_acronyms": list(self.abbreviations),
+            # Topical anchors so an abbreviation only counts as a match when a
+            # disease-specific concept is also present (prevents acronym
+            # collisions like "HPS" = Hantavirus Pulmonary Syndrome vs. a
+            # "GreenLight HPS laser" paper).
+            "acronym_context": list(
+                dict.fromkeys(
+                    [t.lower() for t in self.component_concepts]
+                    + [t.lower() for t in self.must_include_concepts]
+                )
+            ),
             "expected_papers": [p.to_profile_dict() for p in self.expected_papers],
             "must_include_concepts": list(self.must_include_concepts),
             "penalize": [r.to_profile_dict() for r in self.penalize_rules],

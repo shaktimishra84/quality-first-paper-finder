@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import paper_finder
 from evidence_engine import build_evidence_review, evidence_type_for_paper
 from paper_finder import (
     SEARCH_PURPOSE_DEEP,
@@ -375,6 +376,53 @@ def test_research_mode_keeps_direct_case_reports_low_priority() -> None:
     assert result["topic_match_level"] == "strong_component"
     assert result["study_design"] == "Case series / case report"
     assert result["tier"] == "Tier 4: Low priority"
+
+
+def _hantavirus_primed_profile() -> dict:
+    # Mirrors topic_primer.to_profile_dict() output for a primed topic.
+    return {
+        "key": "primed:x",
+        "display_name": "Critical care management of hanta virus cardiopulmonary syndrome",
+        "triggers": ["critical care management of hanta virus cardiopulmonary syndrome"],
+        "direct_phrases": ["critical care management of hanta virus cardiopulmonary syndrome"],
+        "direct_synonyms": ["hantavirus cardiopulmonary syndrome", "hantavirus pulmonary syndrome"],
+        "component_concepts": ["hantavirus", "cardiopulmonary syndrome"],
+        "parent_topics": ["viral hemorrhagic fever"],
+        "parallel_topics": [],
+        "mechanism_terms": ["capillary leak"],
+        "direct_acronyms": ["HPS", "HCPS"],
+        "acronym_context": ["hantavirus", "cardiopulmonary syndrome", "cardiopulmonary"],
+        "must_include_concepts": ["hantavirus", "cardiopulmonary"],
+        "query_expansion_terms": ["HPS", "HCPS", "hantavirus pulmonary syndrome"],
+    }
+
+
+def test_ambiguous_acronym_does_not_force_direct_match(monkeypatch) -> None:
+    # Regression: the primer abbreviation "HPS" (Hantavirus Pulmonary Syndrome)
+    # must not make an unrelated "GreenLight HPS laser" BPH paper a direct match.
+    monkeypatch.setattr(paper_finder, "topic_profile", lambda topic: _hantavirus_primed_profile())
+    context = SearchContext(topic="Critical care management of hanta virus cardiopulmonary syndrome")
+
+    bph = classify_topic_match(
+        "Comparative efficacy and safety of 180 W XPS vs. 120 W HPS GreenLight laser "
+        "therapy for benign prostatic hyperplasia: a systematic review and meta-analysis.",
+        "A systematic review comparing GreenLight laser therapy for benign prostatic hyperplasia.",
+        context,
+    )
+    assert bph["level"] not in {"direct", "direct_synonym", "strong_component", "abstract_only"}
+    assert bph["relevance_cap"] <= 14
+
+
+def test_acronym_with_disease_context_still_matches(monkeypatch) -> None:
+    monkeypatch.setattr(paper_finder, "topic_profile", lambda topic: _hantavirus_primed_profile())
+    context = SearchContext(topic="Critical care management of hanta virus cardiopulmonary syndrome")
+
+    real = classify_topic_match(
+        "Critical care management of hantavirus cardiopulmonary syndrome (HPS): a review",
+        "Hantavirus pulmonary syndrome causes capillary leak and cardiopulmonary collapse.",
+        context,
+    )
+    assert real["level"] in {"direct", "direct_synonym", "strong_component", "abstract_only"}
 
 
 def test_cam_icu_typo_expands_to_specific_delirium_tool() -> None:
