@@ -20,6 +20,7 @@ from typing import Any, Callable
 import requests
 
 from evidence_engine import build_evidence_review
+from semantic_relevance import score_semantic_relevance
 from topic_primer import TopicPrimer, prime_topic
 
 
@@ -1160,6 +1161,9 @@ def run_quality_first_search(
     expected_order = expected_paper_order(topic_profile(context.topic))
     for paper in scored:
         paper["expected_paper_order"] = expected_order.get(str(paper.get("pmid", "")), 999)
+    # Optional semantic guard: flag high-ranked papers that are semantically far
+    # from the query (e.g. acronym collisions). Fail-soft; only runs with a key.
+    semantic_status = score_semantic_relevance(context.topic, scored, context.gemini_api_key)
     scored.sort(key=paper_sort_key)
     missing_expected = missing_expected_papers(expected_papers, scored)
 
@@ -4752,7 +4756,11 @@ def apply_evidence_family_ranks(papers: list[dict[str, Any]]) -> None:
                 paper["why_included"] += "; same evidence family as a higher-ranked paper"
 
 
-def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int, int]:
+def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int, int, int]:
+    # Highest-priority demotion: a semantic outlier (high lexical rank but far
+    # from the query, e.g. an acronym collision) sinks below everything else.
+    # Non-outliers all share order 0, so their existing relative order is intact.
+    semantic_outlier_order = 1 if paper.get("semantic_outlier") else 0
     section_order = reading_section_order(paper.get("search_mode", "")).get(
         paper.get("reading_section", ""),
         99,
@@ -4769,6 +4777,7 @@ def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int,
     # only by the broad recall net sorts after one found by a precise layer.
     recall_only_order = 1 if paper.get("expansion_recall_only") else 0
     return (
+        semantic_outlier_order,
         section_order,
         expected_order,
         tier_order,

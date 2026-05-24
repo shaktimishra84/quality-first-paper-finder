@@ -1085,6 +1085,8 @@ def _paper_caveats(paper: dict[str, Any]) -> list[str]:
         caveats.append(str(paper.get("tier_cap_reason")))
     if paper.get("expansion_recall_only"):
         caveats.append("entered via expanded-recall net only")
+    if paper.get("semantic_outlier"):
+        caveats.append(str(paper.get("semantic_outlier_reason") or "low semantic similarity to query"))
     return _dedupe(caveats)
 
 

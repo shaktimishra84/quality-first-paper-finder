@@ -63,6 +63,8 @@ PAPER_LOG_COLUMNS = [
     "topic_match_gate",
     "relation_type",
     "expansion_recall_only",
+    "semantic_score",
+    "semantic_outlier",
     "search_layers",
     "url",
 ]
