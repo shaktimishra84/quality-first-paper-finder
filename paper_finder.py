@@ -811,42 +811,6 @@ def build_search_layers(
                     retmax=max(30, candidate_depth // 3),
                 )
             )
-    # LLM/profile-derived query expansion for recall-oriented modes. ORs the
-    # union of synonyms, components, parent topics, and mechanisms (from the
-    # Gemini primer or a curated topic profile) with no publication-type filter.
-    # Hits still pass the downstream topic gate, verification, and tier-aware
-    # scoring, so broadening recall here cannot bypass the verified-source rule.
-    recall_expansion_terms = clean_term_list(
-        list(semantic_terms.get("synonym", []))
-        + list(semantic_terms.get("component", []))
-        + list(semantic_terms.get("parent", []))
-        + list(semantic_terms.get("mechanism", []))
-    )[:24]
-    recall_expansion_clauses = [
-        clause
-        for clause in (pubmed_term_clause(term, "Title/Abstract") for term in recall_expansion_terms)
-        if clause
-    ]
-    # LLM query expansion runs in EVERY mode: a dedicated recall layer that ORs
-    # the expansion union with no publication-type filter. Recall-oriented modes
-    # (Deep/Rare) fetch a larger pool; precision/speed modes (Learning/Research)
-    # use a smaller cap so they stay fast. The recall-dilution guard and topic
-    # gate keep tangential hits from crowding out top-tier evidence.
-    if len(recall_expansion_clauses) >= 2:
-        recall_retmax = (
-            max(candidate_depth, 150)
-            if purpose in {SEARCH_PURPOSE_DEEP, SEARCH_PURPOSE_RARE}
-            else max(60, candidate_depth // 2)
-        )
-        layers.append(
-            SearchLayer(
-                name="LLM-expanded recall",
-                purpose="LLM/profile-derived synonyms, eponyms, components, parent topics, and mechanisms ORed to catch literature indexed under alternate terminology.",
-                query=f"({' OR '.join(recall_expansion_clauses)})",
-                retmax=recall_retmax,
-            )
-        )
-
     if purpose == SEARCH_PURPOSE_DEEP:
         layers.insert(
             0,
@@ -1100,18 +1064,6 @@ def run_quality_first_search(
         missing_from_automatic = []
 
     deduped = deduplicate_papers(all_papers)
-    # Flag papers that entered ONLY through the broad LLM-expanded recall net
-    # (no precise layer, API supervisor, or expected-paper seed also matched).
-    # These are the most likely to be tangential, so they get a transparency
-    # caveat and a low-priority sort tiebreak; the topic gate still caps their
-    # tier, so this does not penalise genuine recall wins that match directly.
-    for paper in deduped:
-        layers_found = paper.get("search_layers") or []
-        if isinstance(layers_found, str):
-            layers_found = [name.strip() for name in layers_found.split(",") if name.strip()]
-        paper["expansion_recall_only"] = (
-            bool(layers_found) and set(layers_found) == {"LLM-expanded recall"}
-        )
     accepted = [paper for paper in deduped if is_verified(paper)]
     rejected = [paper for paper in deduped if not is_verified(paper)]
 
@@ -4756,7 +4708,7 @@ def apply_evidence_family_ranks(papers: list[dict[str, Any]]) -> None:
                 paper["why_included"] += "; same evidence family as a higher-ranked paper"
 
 
-def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int, int, int]:
+def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int, int]:
     # Highest-priority demotion: a semantic outlier (high lexical rank but far
     # from the query, e.g. an acronym collision) sinks below everything else.
     # Non-outliers all share order 0, so their existing relative order is intact.
@@ -4773,9 +4725,6 @@ def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int,
     purpose_score = int(paper.get("purpose_fit_score", 0))
     total = int(paper.get("total_score", 0))
     year = int(paper.get("year") or 0)
-    # Lowest-priority tiebreak: when everything else is equal, a paper found
-    # only by the broad recall net sorts after one found by a precise layer.
-    recall_only_order = 1 if paper.get("expansion_recall_only") else 0
     return (
         semantic_outlier_order,
         section_order,
@@ -4787,7 +4736,6 @@ def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int,
         -purpose_score,
         -total,
         -year,
-        recall_only_order,
     )
 
 

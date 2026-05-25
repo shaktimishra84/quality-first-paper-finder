@@ -543,7 +543,6 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
             "key_role": source.get("key_role"),
             "confidence": source.get("confidence"),
             "caveats": source.get("caveats"),
-            "recall_only": bool(source.get("expansion_recall_only")),
             "abstract": (str(source.get("abstract") or "").strip()[:800]) or None,
         }
         for source in (review.get("sources", []) or [])[:40]
@@ -636,11 +635,9 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
         "recommendations; describe what the evidence shows, not what a clinician "
         "should do. (6) strength_of_evidence must be one of: high, moderate, "
         "low, very low — based on the evidence type and tier of the citing "
-        "sources. (7) Treat sources flagged recall_only=true with extra caution: "
-        "they were retrieved by a broad terminology-expansion net and may be "
-        "tangential — do not let them dominate the synthesis. (8) When the "
-        "supplied information is insufficient to support a claim, omit it rather "
-        "than guessing. This is research synthesis, not medical advice."
+        "sources. (7) When the supplied information is insufficient to support a "
+        "claim, omit it rather than guessing. This is research synthesis, not "
+        "medical advice."
     ) + focus_instruction
     body = {
         "system_instruction": {"parts": [{"text": system}]},
@@ -800,7 +797,6 @@ def _source_record(source_number: int, paper: dict[str, Any]) -> dict[str, Any]:
         "confidence": confidence,
         "caveats": "; ".join(caveats) if caveats else "No major metadata caveat flagged.",
         "source_records": str(paper.get("source_records", "") or "").strip(),
-        "expansion_recall_only": bool(paper.get("expansion_recall_only")),
         "abstract": str(paper.get("abstract", "") or "").strip()[:1500],
     }
 
@@ -1083,8 +1079,6 @@ def _paper_caveats(paper: dict[str, Any]) -> list[str]:
         caveats.append("observational design")
     if paper.get("tier_cap_reason"):
         caveats.append(str(paper.get("tier_cap_reason")))
-    if paper.get("expansion_recall_only"):
-        caveats.append("entered via expanded-recall net only")
     if paper.get("semantic_outlier"):
         caveats.append(str(paper.get("semantic_outlier_reason") or "low semantic similarity to query"))
     return _dedupe(caveats)

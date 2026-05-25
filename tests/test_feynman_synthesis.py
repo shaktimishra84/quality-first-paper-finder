@@ -177,52 +177,6 @@ def test_resolve_gemini_model_honours_preferred() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# LLM query expansion -> search layers (mode gating)
-# --------------------------------------------------------------------------- #
-def _stub_layers_env(monkeypatch) -> None:
-    monkeypatch.setattr(paper_finder, "build_topic_query", lambda topic, email="", api_key="": topic)
-    monkeypatch.setattr(
-        paper_finder,
-        "topic_profile",
-        lambda topic: {
-            "query_expansion_terms": ["cvst", "dural sinus thrombosis", "sinus thrombosis"],
-            "parent_topics": ["venous thromboembolism"],
-            "mechanism_terms": ["hypercoagulability"],
-        },
-    )
-
-
-def test_recall_layer_present_in_all_modes(monkeypatch) -> None:
-    _stub_layers_env(monkeypatch)
-
-    def layers(purpose, depth):
-        return build_search_layers(SearchContext(topic="zz topic", search_purpose=purpose), depth)
-
-    for purpose, depth in [
-        (SEARCH_PURPOSE_DEEP, 200),
-        (SEARCH_PURPOSE_RARE, 160),
-        (SEARCH_PURPOSE_RESEARCH, 130),
-        (SEARCH_PURPOSE_KNOWLEDGE, 80),
-    ]:
-        names = [l.name for l in layers(purpose, depth)]
-        assert "LLM-expanded recall" in names, f"missing in {purpose}"
-
-    # precision/speed modes fetch a smaller recall pool than recall-oriented modes
-    def recall_retmax(purpose, depth):
-        return next(l for l in layers(purpose, depth) if l.name == "LLM-expanded recall").retmax
-
-    assert recall_retmax(SEARCH_PURPOSE_KNOWLEDGE, 80) < recall_retmax(SEARCH_PURPOSE_DEEP, 200)
-
-
-def test_recall_layer_ors_expansion_terms(monkeypatch) -> None:
-    _stub_layers_env(monkeypatch)
-    deep = build_search_layers(SearchContext(topic="zz topic", search_purpose=SEARCH_PURPOSE_DEEP), 200)
-    recall = next(l for l in deep if l.name == "LLM-expanded recall")
-    assert "cvst" in recall.query.lower()
-    assert " OR " in recall.query
-
-
-# --------------------------------------------------------------------------- #
 # Workflow trace visibility
 # --------------------------------------------------------------------------- #
 def test_expansion_trace_note_reports_terms_when_active() -> None:
@@ -240,32 +194,4 @@ def test_expansion_trace_note_reports_off_states() -> None:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Recall-dilution guard (sort tiebreak)
-# --------------------------------------------------------------------------- #
-def test_recall_only_paper_sorts_after_equal_precise_paper() -> None:
-    base = {
-        "search_mode": SEARCH_PURPOSE_DEEP,
-        "reading_section": "Extended evidence base",
-        "expected_paper_order": 999,
-        "tier": "Tier 2: Useful supporting",
-        "topic_match_level": "direct",
-        "evidence_family_rank": 1,
-        "purpose_fit_score": 5,
-        "total_score": 70,
-        "year": 2022,
-    }
-    precise = dict(base, expansion_recall_only=False)
-    recall_only = dict(base, expansion_recall_only=True)
-    # identical on every meaningful axis; only the recall flag differs
-    assert paper_sort_key(precise) < paper_sort_key(recall_only)
-
-
-# --------------------------------------------------------------------------- #
-# Eponym-aware primer prompt
-# --------------------------------------------------------------------------- #
-def test_primer_prompt_requests_eponyms_and_variants() -> None:
-    prompt = topic_primer.PROMPT_INSTRUCTIONS.lower()
-    assert "eponym" in prompt
-    assert "spelling" in prompt or "variant" in prompt
 
