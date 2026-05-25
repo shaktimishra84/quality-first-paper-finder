@@ -20,8 +20,12 @@ from typing import Any, Callable
 import requests
 
 from evidence_engine import build_evidence_review
-from semantic_relevance import score_semantic_relevance
+from intent_ranker import rank_by_intent
 from topic_primer import TopicPrimer, prime_topic
+
+# A must-read (Tier 1) paper must clear this intent-fit threshold (0-1) once the
+# LLM has re-ranked it; otherwise it is demoted, so Tier 1 stays on-intent.
+INTENT_TIER1_MIN = 0.5
 
 
 TOPICS_DIR = Path(__file__).resolve().parent / "topics"
@@ -1113,9 +1117,32 @@ def run_quality_first_search(
     expected_order = expected_paper_order(topic_profile(context.topic))
     for paper in scored:
         paper["expected_paper_order"] = expected_order.get(str(paper.get("pmid", "")), 999)
-    # Optional semantic guard: flag high-ranked papers that are semantically far
-    # from the query (e.g. acronym collisions). Fail-soft; only runs with a key.
-    semantic_status = score_semantic_relevance(context.topic, scored, context.gemini_api_key)
+
+    # Intent-aware ranking: score each top candidate against the LLM-written
+    # clinical intent, re-gate Tier 1 so a must-read must actually match the
+    # intent, and order results by intent fit. Fail-soft; only runs with a key.
+    clinical_intent = ""
+    primed_profile = topic_profile(context.topic)
+    if primed_profile:
+        clinical_intent = str(primed_profile.get("clinical_intent", "") or "").strip()
+    intent_status = rank_by_intent(clinical_intent, context.topic, scored, context.gemini_api_key)
+    if intent_status == "scored":
+        for paper in scored:
+            if (
+                paper.get("intent_reranked")
+                and TIER_ORDER.get(paper.get("tier", ""), 5) == 1
+                and not paper.get("expected_paper_reason")
+                and float(paper.get("intent_fit", 1.0) or 0.0) < INTENT_TIER1_MIN
+            ):
+                paper["tier"] = TIER_BY_ORDER[2]
+                prior = paper.get("tier_cap_reason", "")
+                paper["tier_cap_reason"] = (
+                    (prior + "; " if prior else "")
+                    + f"intent fit {float(paper.get('intent_fit', 0.0)):.2f} below Tier-1 threshold"
+                )
+                paper["reading_section"] = assign_reading_section(paper, context)
+                paper["reason_for_tier"] = reason_for_tier(paper)
+
     scored.sort(key=paper_sort_key)
     missing_expected = missing_expected_papers(expected_papers, scored)
 
@@ -1145,6 +1172,8 @@ def run_quality_first_search(
         "topic_expanded": context.topic if context.topic.strip().lower() != original_topic.strip().lower() else "",
         "mesh_discovered": discovered_mesh,
         "topic_primer_status": primer_status,
+        "clinical_intent": clinical_intent,
+        "intent_ranking_status": intent_status,
         "api_discovery": api_discovery,
         "search_purpose": context.search_purpose,
         "search_purpose_config": {
@@ -4709,16 +4738,15 @@ def apply_evidence_family_ranks(papers: list[dict[str, Any]]) -> None:
 
 
 def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int, int, int]:
-    # Highest-priority demotion: a semantic outlier (high lexical rank but far
-    # from the query, e.g. an acronym collision) sinks below everything else.
-    # Non-outliers all share order 0, so their existing relative order is intact.
-    semantic_outlier_order = 1 if paper.get("semantic_outlier") else 0
     section_order = reading_section_order(paper.get("search_mode", "")).get(
         paper.get("reading_section", ""),
         99,
     )
     expected_order = int(paper.get("expected_paper_order", 999))
     tier_order = TIER_ORDER.get(paper.get("tier", ""), 9)
+    # Within a tier/section, order by how well the paper matches the user's
+    # intent (0 when intent ranking is off, so order is unchanged without a key).
+    intent_bucket = round(float(paper.get("intent_fit") or 0.0) * 1000)
     topic_order = TOPIC_LEVEL_ORDER.get(paper.get("topic_match_level", ""), 9)
     mandatory_order = 0 if paper.get("mandatory_review_candidate") else 1
     family_rank = int(paper.get("evidence_family_rank", 1))
@@ -4726,10 +4754,10 @@ def paper_sort_key(paper: dict[str, Any]) -> tuple[int, int, int, int, int, int,
     total = int(paper.get("total_score", 0))
     year = int(paper.get("year") or 0)
     return (
-        semantic_outlier_order,
         section_order,
         expected_order,
         tier_order,
+        -intent_bucket,
         topic_order,
         mandatory_order,
         family_rank,

@@ -1215,6 +1215,13 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
         f'{tier_badge("Tier 4")}<span class="qf-tier-legend-desc">manual review</span>'
         "</div>"
     )
+    clinical_intent = str(result.get("clinical_intent", "") or "").strip()
+    intent_html = (
+        f'<div class="context-meta" style="margin-top:6px;">'
+        f'<em>Interpreted intent:</em> {e(clinical_intent)}</div>'
+        if clinical_intent
+        else ""
+    )
     render_html(
         f"""
         <div class="context-card">
@@ -1223,6 +1230,7 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
               <div class="eyebrow">Query context</div>
               <div class="query-title">{e(effective_topic or "Search results")}</div>
               <div class="context-meta">{e(" | ".join(meta))}</div>
+              {intent_html}
             </div>
           </div>
           <div class="chip-row">{"".join(chips)}</div>

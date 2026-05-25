@@ -62,9 +62,8 @@ PAPER_LOG_COLUMNS = [
     "quartile",
     "topic_match_gate",
     "relation_type",
-    "expansion_recall_only",
-    "semantic_score",
-    "semantic_outlier",
+    "intent_fit",
+    "intent_reranked",
     "search_layers",
     "url",
 ]

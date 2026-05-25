@@ -103,6 +103,7 @@ class TopicPrimer:
     parallel_topics: tuple[str, ...] = ()
     mechanism_terms: tuple[str, ...] = ()
     abbreviations: tuple[str, ...] = ()
+    clinical_intent: str = ""
 
     def to_profile_dict(self) -> dict[str, Any]:
         normalized = _normalize_topic_key(self.topic)
@@ -134,6 +135,7 @@ class TopicPrimer:
             "query_expansion_terms": list(self.query_expansion_terms),
             "expected_categories": list(self.expected_categories),
             "population_priority": self.population_priority,
+            "clinical_intent": self.clinical_intent,
             "_primed": True,
             "_primer_status": self.status,
             "_primer_notes": list(self.notes),
@@ -165,6 +167,12 @@ PROMPT_INSTRUCTIONS = (
     "  trials, foundational reviews, diagnostic landmarks). Provide PubMed ID "
     "  (pmid as a string of digits only), title, one-line reason, and category. "
     f"  Categories must be one of: {', '.join(repr(c) for c in VALID_CATEGORIES)}.\n"
+    "- clinical_intent: ONE or TWO sentences stating precisely what the user is "
+    "  looking for — the exact clinical entity, the aspect they care about "
+    "  (management, diagnosis, prognosis, mechanism, epidemiology), and the "
+    "  population if implied. Resolve any conflated or contradictory phrasing to "
+    "  the single most coherent clinical question. This statement is used to "
+    "  rank results, so be specific and faithful to the user's actual goal.\n"
     "- must_include_concepts: 5-12 short phrases (lower-case, 1-3 words each) "
     "  that a clinically relevant paper would mention.\n"
     "- penalize_rules: 3-6 rules to down-rank off-topic papers. Each has a "
@@ -235,6 +243,7 @@ GEMINI_RESPONSE_SCHEMA = {
             },
         },
         "population_priority": {"type": "STRING"},
+        "clinical_intent": {"type": "STRING"},
         "expected_categories": {
             "type": "ARRAY",
             "items": {"type": "STRING"},
@@ -478,6 +487,7 @@ def _build_primer_from_payload(
         abbreviations=_coerce_str_list(
             semantic_gate.get("abbreviations"), max_items=MAX_SEMANTIC_TERMS
         ),
+        clinical_intent=str(payload.get("clinical_intent") or "").strip(),
     )
 
 
