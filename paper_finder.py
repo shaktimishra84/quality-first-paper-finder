@@ -345,6 +345,91 @@ SEARCH_PURPOSE_ALIASES = {
     "Systematic review pool": SEARCH_PURPOSE_DEEP,
 }
 
+QUERY_TYPE_EXACT_CONCEPT = "Specific named concept"
+QUERY_TYPE_BROAD_CLINICAL = "Broad clinical topic"
+QUERY_TYPE_PICO = "PICO question"
+QUERY_TYPE_RARE = "Rare complication"
+QUERY_TYPE_MECHANISM = "Mechanism/pathophysiology"
+QUERY_TYPE_RESEARCH_GAP = "Research-gap query"
+
+EXACT_CONCEPT_INDICATOR_TERMS = {
+    "assessment",
+    "biomarker",
+    "bundle",
+    "classification",
+    "clearance",
+    "compliance",
+    "criteria",
+    "delta",
+    "definition",
+    "excess",
+    "fraction",
+    "gap",
+    "gradient",
+    "index",
+    "marker",
+    "method",
+    "phenotype",
+    "power",
+    "pressure",
+    "protocol",
+    "ratio",
+    "score",
+    "scale",
+    "signature",
+    "subphenotype",
+    "test",
+    "tool",
+    "volume",
+}
+
+PICO_QUERY_CUES = [
+    " vs ",
+    " versus ",
+    " compared with ",
+    " compared to ",
+    "intervention",
+    "treatment",
+    "therapy",
+    "management",
+    "outcome",
+]
+
+MECHANISM_QUERY_CUES = [
+    "mechanism",
+    "mechanisms",
+    "pathophysiology",
+    "physiology",
+    "molecular",
+    "pathway",
+    "pathways",
+    "basic science",
+]
+
+RESEARCH_GAP_QUERY_CUES = [
+    "research gap",
+    "gap",
+    "gaps",
+    "feasibility",
+    "implementation",
+    "protocol",
+    "external validation",
+    "validation study",
+    "sample size",
+]
+
+RARE_QUERY_CUES = [
+    "rare",
+    "case report",
+    "case reports",
+    "case series",
+    "unusual",
+    "uncommon",
+    "atypical",
+    "complication",
+    "adverse event",
+]
+
 TOPIC_TEXT_REPLACEMENTS = {
     "complianse": "compliance",
     "complaince": "compliance",
@@ -462,7 +547,7 @@ def user_intent_terms(context: SearchContext, max_terms: int = 10) -> list[str]:
     (for example pregnancy, anticoagulation, recurrence, diagnosis) so a
     profile match does not flatten a specific question into a generic topic.
     """
-    profile = topic_profile(context.topic)
+    profile = topic_profile_for_context(context)
     core_terms = profile_core_keywords(profile)
     raw_terms: list[str] = []
 
@@ -593,6 +678,241 @@ def exact_named_concept_profile(profile: dict[str, Any] | None) -> bool:
     return bool(profile and profile.get("query_strategy") == "exact_named_concept")
 
 
+def explicit_pico_structure(context: SearchContext) -> bool:
+    topic_text = f" {normalize_space(context.topic).lower()} "
+    return bool(
+        context.population.strip()
+        or context.intervention.strip()
+        or context.comparator.strip()
+        or context.outcome.strip()
+        or has_any(topic_text, PICO_QUERY_CUES)
+    )
+
+
+def pico_like_context(context: SearchContext) -> bool:
+    return bool(
+        explicit_pico_structure(context)
+        or context.question_type != "General evidence map"
+    )
+
+
+def cleaned_named_concept_phrase(topic: str) -> str:
+    phrase = normalize_space(topic).lower()
+    if not phrase:
+        return ""
+    phrase = re.sub(
+        r"^(?:find|search|show|get)\s+(?:me\s+)?(?:papers?|articles?|studies?|reviews?)?\s*(?:on|about|for)?\s+",
+        "",
+        phrase,
+    )
+    phrase = re.sub(
+        r"^(?:best|top|key|important|core)\s+(?:papers?|articles?|studies?|reviews?)\s+(?:on|about|for)\s+",
+        "",
+        phrase,
+    )
+    phrase = re.sub(r"^(?:literature|evidence|review)\s+(?:on|about|for)\s+", "", phrase)
+    phrase = re.sub(r"\s+(?:papers?|articles?|studies?|reviews?)$", "", phrase)
+    return normalize_space(phrase)
+
+
+def looks_like_specific_named_concept_context(context: SearchContext) -> bool:
+    topic_text = cleaned_named_concept_phrase(context.topic)
+    if not topic_text or len(topic_text) > 90:
+        return False
+    if explicit_pico_structure(context):
+        return False
+    if has_any(topic_text, MECHANISM_QUERY_CUES):
+        return False
+    words = keywords(topic_text)
+    if len(words) < 2 or len(words) > 7:
+        return False
+    if any(term in EXACT_CONCEPT_INDICATOR_TERMS for term in words):
+        return True
+    if re.search(r"\b[A-Z]{2,6}\b", context.topic) and any(
+        term in topic_text for term in ["score", "index", "ratio", "scale", "tool", "assessment"]
+    ):
+        return True
+    return False
+
+
+def detect_query_type(context: SearchContext) -> str:
+    topic_text = normalize_space(context.topic).lower()
+    purpose = normalized_search_purpose(context.search_purpose)
+    if purpose == SEARCH_PURPOSE_RARE or has_any(topic_text, RARE_QUERY_CUES):
+        return QUERY_TYPE_RARE
+    if looks_like_specific_named_concept_context(context):
+        return QUERY_TYPE_EXACT_CONCEPT
+    if pico_like_context(context):
+        return QUERY_TYPE_PICO
+    if has_any(topic_text, MECHANISM_QUERY_CUES):
+        return QUERY_TYPE_MECHANISM
+    if has_any(topic_text, RESEARCH_GAP_QUERY_CUES):
+        return QUERY_TYPE_RESEARCH_GAP
+    return QUERY_TYPE_BROAD_CLINICAL
+
+
+def profile_directly_covers_topic(profile: dict[str, Any], topic: str) -> bool:
+    topic_text = cleaned_named_concept_phrase(topic).replace("-", " ")
+    if not topic_text:
+        return False
+    direct_values: list[str] = []
+    for field in ["display_name", "direct_phrases", "direct_synonyms", "direct_acronyms"]:
+        value = profile.get(field)
+        if isinstance(value, list):
+            direct_values.extend(str(item) for item in value if item)
+        elif value:
+            direct_values.append(str(value))
+    for value in direct_values:
+        term = normalize_space(value).lower().replace("-", " ")
+        if not term or len(term) < 3:
+            continue
+        if term in topic_text or topic_text in term:
+            return True
+    return False
+
+
+def generic_exact_context_terms(context: SearchContext, profile: dict[str, Any] | None = None) -> list[str]:
+    raw_terms: list[str] = []
+    if profile:
+        for field in ["context_terms", "must_include_concepts", "component_concepts", "family_terms"]:
+            value = profile.get(field)
+            if isinstance(value, list):
+                raw_terms.extend(str(item) for item in value if item)
+    raw_terms.extend(keywords(context.population))
+    raw_terms.extend(keywords(context.intervention))
+    raw_terms.extend(keywords(context.comparator))
+    raw_terms.extend(keywords(context.outcome))
+    raw_terms.extend(
+        [
+            "clinical",
+            "patient",
+            "patients",
+            "diagnosis",
+            "prognosis",
+            "validation",
+            "cohort",
+            "mortality",
+            "critical care",
+            "intensive care",
+            "icu",
+        ]
+    )
+    return clean_term_list(raw_terms)[:18]
+
+
+def generic_exact_component_queries(phrase: str, context: SearchContext) -> list[str]:
+    terms = topic_component_concepts(phrase)
+    if len(terms) <= 1:
+        terms = keywords(phrase)
+    terms = unique_component_axis_terms(clean_term_list(terms))
+    if len(terms) < 2:
+        return []
+    clauses = [
+        clause
+        for clause in (pubmed_term_clause(term, "Title/Abstract") for term in terms[:4])
+        if clause
+    ]
+    if len(clauses) < 2:
+        return []
+    return [" AND ".join(clauses)]
+
+
+def inferred_exact_named_concept_profile(context: SearchContext) -> dict[str, Any] | None:
+    if not looks_like_specific_named_concept_context(context):
+        return None
+    phrase = cleaned_named_concept_phrase(context.topic)
+    if not phrase:
+        return None
+    component_terms = clean_term_list([phrase, *keywords(phrase)])
+    return {
+        "key": "_inferred_exact_named_concept",
+        "display_name": phrase,
+        "query_strategy": "exact_named_concept",
+        "query_type": QUERY_TYPE_EXACT_CONCEPT,
+        "fallback_direct_threshold": 5,
+        "exact_phrases": [phrase],
+        "direct_phrases": [phrase],
+        "direct_synonyms": [],
+        "direct_acronyms": [],
+        "context_terms": generic_exact_context_terms(context),
+        "component_concepts": component_terms,
+        "family_terms": component_terms,
+        "must_include_concepts": [phrase],
+        "required_exact_phrases": [phrase],
+        "required_concept_groups": [[[phrase]]],
+        "component_fallback_queries": generic_exact_component_queries(phrase, context),
+        "background_terms": [],
+        "clinical_intent": (
+            f"Find papers directly addressing the named concept '{phrase}'. "
+            "Component-only papers are background unless direct papers are sparse."
+        ),
+    }
+
+
+def exact_profile_from_authored_context(
+    context: SearchContext,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    phrase = cleaned_named_concept_phrase(context.topic)
+    derived = copy.deepcopy(profile)
+    authored_direct = (
+        [str(term) for term in profile.get("exact_phrases", []) if term]
+        + [str(term) for term in profile.get("direct_phrases", []) if term]
+    )
+    expansion_terms = [
+        str(term)
+        for term in profile.get("query_expansion_terms", [])
+        if str(term).strip()
+    ]
+
+    def display_cased_direct_term(term: str) -> str:
+        term_key = normalize_space(term).lower()
+        for expansion in expansion_terms:
+            if normalize_space(expansion).lower() == term_key:
+                return expansion
+        normalized_key = normalize_title(term)
+        for expansion in expansion_terms:
+            if normalize_title(expansion) == normalized_key:
+                return expansion
+        return term
+
+    direct_phrases = clean_query_term_list(
+        [display_cased_direct_term(term) for term in authored_direct]
+    )
+    derived["query_strategy"] = "exact_named_concept"
+    derived["query_type"] = QUERY_TYPE_EXACT_CONCEPT
+    derived["fallback_direct_threshold"] = int(profile.get("fallback_direct_threshold", 5) or 5)
+    derived["exact_phrases"] = direct_phrases or [phrase]
+    derived["direct_phrases"] = direct_phrases or [phrase]
+    derived["context_terms"] = generic_exact_context_terms(context, profile)
+    if not derived.get("component_fallback_queries"):
+        derived["component_fallback_queries"] = generic_exact_component_queries(phrase, context)
+    if not derived.get("clinical_intent"):
+        label = str(profile.get("display_name") or phrase)
+        derived["clinical_intent"] = (
+            f"Find papers directly addressing {label}; keep broader component or family papers as background."
+        )
+    return derived
+
+
+def topic_profile_for_context(context: SearchContext) -> dict[str, Any] | None:
+    authored = authored_topic_profile(context.topic)
+    if authored:
+        if exact_named_concept_profile(authored):
+            return authored
+        if looks_like_specific_named_concept_context(context):
+            if profile_directly_covers_topic(authored, context.topic):
+                return exact_profile_from_authored_context(context, authored)
+            inferred = inferred_exact_named_concept_profile(context)
+            if inferred:
+                return inferred
+        return authored
+    inferred = inferred_exact_named_concept_profile(context)
+    if inferred:
+        return inferred
+    return _PRIMED_PROFILES.get(_normalize_topic_key(context.topic))
+
+
 def pubmed_or_clause(terms: list[str], field: str = "Title/Abstract") -> str:
     clauses = [
         clause
@@ -602,17 +922,32 @@ def pubmed_or_clause(terms: list[str], field: str = "Title/Abstract") -> str:
     return " OR ".join(dict.fromkeys(clauses))
 
 
+def clean_query_term_list(terms: list[str]) -> list[str]:
+    seen: set[str] = set()
+    cleaned_terms: list[str] = []
+    for term in terms:
+        cleaned = normalize_space(str(term))
+        key = cleaned.lower()
+        if not cleaned or key in STOPWORDS or len(key) < 3:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned_terms.append(cleaned)
+    return cleaned_terms
+
+
 def build_exact_concept_search_layers(
     context: SearchContext,
     profile: dict[str, Any],
     candidate_depth: int,
 ) -> list[SearchLayer]:
     purpose = normalized_search_purpose(context.search_purpose)
-    exact_terms = clean_term_list(
+    exact_terms = clean_query_term_list(
         [str(term) for term in profile.get("exact_phrases", [])]
         or [str(term) for term in profile.get("direct_phrases", [])]
     )
-    context_terms = clean_term_list([str(term) for term in profile.get("context_terms", [])])
+    context_terms = clean_query_term_list([str(term) for term in profile.get("context_terms", [])])
     exact_clause = pubmed_or_clause(exact_terms)
     context_clause = pubmed_or_clause(context_terms)
     guarded_acronym_queries = [
@@ -625,7 +960,7 @@ def build_exact_concept_search_layers(
         for query in profile.get("component_fallback_queries", [])
         if normalize_space(str(query))
     ]
-    mechanism_terms = clean_term_list([str(term) for term in profile.get("background_terms", [])])
+    mechanism_terms = clean_query_term_list([str(term) for term in profile.get("background_terms", [])])
     mechanism_clause = pubmed_or_clause(mechanism_terms)
 
     direct_retmax = max(25, min(candidate_depth, 80))
@@ -742,7 +1077,7 @@ def build_search_layers(
 ) -> list[SearchLayer]:
     purpose = normalized_search_purpose(context.search_purpose)
     topic = context.topic.strip()
-    profile = topic_profile(topic)
+    profile = topic_profile_for_context(context)
     if exact_named_concept_profile(profile):
         return build_exact_concept_search_layers(context, profile, candidate_depth)
     topic_query = build_topic_query(topic, email=email, api_key=api_key)
@@ -914,7 +1249,7 @@ def build_search_layers(
                 retmax=max(focused_retmax, 40),
             ),
         )
-    semantic_terms = semantic_topic_terms(topic, topic_profile(topic) or {})
+    semantic_terms = semantic_topic_terms(topic, profile or {})
     component_terms = unique_component_axis_terms(semantic_terms.get("component", []))[:4]
     synonym_terms = semantic_terms.get("synonym", [])[:8]
     parent_terms = semantic_terms.get("parent", [])[:4]
@@ -1082,12 +1417,12 @@ def run_quality_first_search(
         email=email,
         api_key=ncbi_api_key,
     )
-    active_profile = topic_profile(context.topic)
+    active_profile = topic_profile_for_context(context)
     discovered_mesh = discover_mesh(context.topic, email=email, api_key=ncbi_api_key)
     all_papers: list[dict[str, Any]] = []
     errors: list[str] = []
     automatically_retrieved_pmids: set[str] = set()
-    expected_papers = expected_papers_for_topic(context.topic)
+    expected_papers = [dict(item) for item in active_profile.get("expected_papers", [])] if active_profile else []
     api_discovery: dict[str, Any] = {
         "pmids": [],
         "related_pmids": [],
@@ -1295,7 +1630,7 @@ def run_quality_first_search(
 
     scored = [score_and_classify_paper(paper, context, quartile_overrides) for paper in accepted]
     apply_evidence_family_ranks(scored)
-    expected_order = expected_paper_order(topic_profile(context.topic))
+    expected_order = expected_paper_order(active_profile)
     for paper in scored:
         paper["expected_paper_order"] = expected_order.get(str(paper.get("pmid", "")), 999)
 
@@ -1303,7 +1638,7 @@ def run_quality_first_search(
     # clinical intent, re-gate Tier 1 so a must-read must actually match the
     # intent, and order results by intent fit. Fail-soft; only runs with a key.
     clinical_intent = ""
-    primed_profile = topic_profile(context.topic)
+    primed_profile = active_profile
     if primed_profile:
         clinical_intent = str(primed_profile.get("clinical_intent", "") or "").strip()
     intent_status = rank_by_intent(clinical_intent, context.topic, scored, context.gemini_api_key)
@@ -1356,6 +1691,7 @@ def run_quality_first_search(
         "clinical_intent": clinical_intent,
         "intent_ranking_status": intent_status,
         "api_discovery": api_discovery,
+        "query_type": detect_query_type(context),
         "search_purpose": context.search_purpose,
         "search_purpose_config": {
             key: value
@@ -1370,6 +1706,7 @@ def run_quality_first_search(
             "comparator": context.comparator,
             "outcome": context.outcome,
             "question_type": context.question_type,
+            "query_type": detect_query_type(context),
             "search_purpose": context.search_purpose,
         },
     }
@@ -1410,7 +1747,7 @@ def run_api_discovery_supervisor(
     errors: list[str] = []
     warnings: list[str] = []
     purpose = normalized_search_purpose(context.search_purpose)
-    exact_concept = exact_named_concept_profile(topic_profile(context.topic))
+    exact_concept = exact_named_concept_profile(topic_profile_for_context(context))
 
     def add_pmids(found_pmids: list[str], layer: str, query: str, reason: str) -> None:
         clean_pmids = []
@@ -1848,7 +2185,7 @@ def api_supervisor_concept_query(context: SearchContext, field: str = "Title/Abs
 
 def api_supervisor_keywords(context: SearchContext) -> list[str]:
     topic = normalize_space(context.topic)
-    profile = topic_profile(topic)
+    profile = topic_profile_for_context(context)
     raw_terms: list[str] = []
     if profile:
         if exact_named_concept_profile(profile):
@@ -2937,7 +3274,7 @@ def apply_topic_penalties(
     context: SearchContext,
     design: str = "",
 ) -> tuple[int, list[str]]:
-    profile = topic_profile(context.topic)
+    profile = topic_profile_for_context(context)
     text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
     publication_type_text = " ".join(
         item.lower()
@@ -3014,7 +3351,7 @@ def apply_topic_penalties(
 
 
 def must_include_boost(paper: dict[str, Any], context: SearchContext) -> tuple[int, list[str]]:
-    profile = topic_profile(context.topic)
+    profile = topic_profile_for_context(context)
     if not profile:
         return 0, []
     concepts = [str(c).lower() for c in profile.get("must_include_concepts", []) if c]
@@ -3368,7 +3705,7 @@ def classify_topic_match(title: str, abstract: str, context: SearchContext) -> d
     title_text = normalize_space(title).lower()
     abstract_text = normalize_space(abstract).lower()
     text = f"{title_text} {abstract_text}"
-    profile = topic_profile(context.topic)
+    profile = topic_profile_for_context(context)
 
     if profile:
         return classify_profile_topic_match(title_text, abstract_text, text, profile)
@@ -3784,6 +4121,35 @@ def required_profile_concept_gate(
     text: str,
     profile: dict[str, Any],
 ) -> dict[str, Any] | None:
+    topic_label = str(profile.get("display_name") or profile.get("key") or "topic")
+    strict_phrases = [
+        str(term).lower()
+        for term in profile.get("required_exact_phrases", [])
+        if str(term).strip()
+    ]
+    if strict_phrases:
+        if any(positive_exact_term_in_text(term, text) for term in strict_phrases):
+            return None
+        family_hits = term_hits(
+            [str(term).lower() for term in profile.get("family_terms", []) if term],
+            text,
+        )
+        if family_hits:
+            return topic_gate(
+                "Background match",
+                "background",
+                14,
+                4,
+                f"related background, but missing the exact {topic_label} phrase",
+            )
+        return topic_gate(
+            "Noise / manual review",
+            "noise",
+            8,
+            5,
+            f"missing exact {topic_label} phrase",
+        )
+
     groups = profile.get("required_concept_groups", [])
     if not groups:
         return None
@@ -3800,14 +4166,14 @@ def required_profile_concept_gate(
             "background",
             14,
             4,
-            "related background, but missing the required CAM-ICU/compliance anchor",
+            f"related background, but missing the required {topic_label} anchor",
         )
     return topic_gate(
         "Noise / manual review",
         "noise",
         8,
         5,
-        "missing required CAM-ICU/compliance topic anchor",
+        f"missing required {topic_label} topic anchor",
     )
 
 
@@ -3851,14 +4217,8 @@ def _normalize_topic_key(topic: str) -> str:
     return re.sub(r"\s+", " ", topic or "").strip().lower()
 
 
-def topic_profile(topic: str) -> dict[str, Any] | None:
-    """Return the topic profile for `topic`.
-
-    Hand-authored JSON profiles in topics/*.json take precedence over LLM-
-    generated primers. The primed profile is a drop-in replacement with the
-    same shape (triggers, expected_papers, must_include_concepts, penalize,
-    plus an extra query_expansion_terms field).
-    """
+def authored_topic_profile(topic: str) -> dict[str, Any] | None:
+    """Return a hand-authored topics/*.json profile for `topic`, if one matches."""
     topic_text = normalize_space(topic).lower()
     if not topic_text:
         return None
@@ -3866,6 +4226,20 @@ def topic_profile(topic: str) -> dict[str, Any] | None:
         triggers = profile.get("triggers", [])
         if any(trigger and trigger in topic_text for trigger in triggers):
             return profile
+    return None
+
+
+def topic_profile(topic: str) -> dict[str, Any] | None:
+    """Return the stored topic profile for `topic`.
+
+    This is the non-contextual profile lookup used for curated expected-paper
+    seeds and primer cache checks. The search/ranking pipeline should prefer
+    topic_profile_for_context(), because it can infer exact-concept behaviour
+    from the user's query before falling back to broad profiles.
+    """
+    authored = authored_topic_profile(topic)
+    if authored:
+        return authored
     return _PRIMED_PROFILES.get(_normalize_topic_key(topic))
 
 
@@ -3886,11 +4260,11 @@ def register_primer_if_needed(
     if not topic.strip():
         return "unavailable"
 
-    topic_text = normalize_space(topic).lower()
-    for profile in load_topic_profiles():
-        triggers = profile.get("triggers", [])
-        if any(trigger and trigger in topic_text for trigger in triggers):
-            return "profile"
+    if authored_topic_profile(topic):
+        return "profile"
+
+    if inferred_exact_named_concept_profile(SearchContext(topic=topic)):
+        return "inferred_exact_concept"
 
     if not gemini_api_key:
         return "unavailable"
@@ -4527,7 +4901,7 @@ def mode_specific_tier_cap(paper: dict[str, Any], context: SearchContext) -> tup
     requested_terms = user_intent_terms(context)
     topic_level = paper.get("topic_match_level", "")
 
-    if exact_named_concept_profile(topic_profile(context.topic)) and topic_level in {
+    if exact_named_concept_profile(topic_profile_for_context(context)) and topic_level in {
         "parent",
         "parallel",
         "background",
@@ -4628,7 +5002,7 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
     rare_signal = has_any(text, RARE_CASE_TERMS)
     recent = bool(paper.get("year") and context.current_year - paper["year"] <= 3)
 
-    if exact_named_concept_profile(topic_profile(context.topic)):
+    if exact_named_concept_profile(topic_profile_for_context(context)):
         if topic_level in {"direct", "direct_synonym"}:
             return "Direct concept papers"
         if topic_level in {"strong_component", "abstract_only"}:
@@ -5145,7 +5519,7 @@ def generate_gap_map(papers: list[dict[str, Any]], context: SearchContext) -> li
             )
         )
 
-    profile = topic_profile(context.topic)
+    profile = topic_profile_for_context(context)
     if profile:
         accepted_blob = " ".join(
             f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
@@ -5186,7 +5560,7 @@ def compute_subtopic_coverage(
     papers: list[dict[str, Any]],
     context: SearchContext,
 ) -> list[dict[str, Any]]:
-    profile = topic_profile(context.topic)
+    profile = topic_profile_for_context(context)
     if not profile:
         return []
     accepted_blob = " ".join(

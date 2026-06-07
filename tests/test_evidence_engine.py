@@ -10,11 +10,13 @@ from paper_finder import (
     SearchContext,
     build_search_layers,
     classify_topic_match,
+    detect_query_type,
     expand_acronyms,
     score_and_classify_paper,
     search_purpose_config,
     should_fetch_exact_concept_fallbacks,
     topic_profile,
+    topic_profile_for_context,
     user_intent_terms,
 )
 
@@ -544,6 +546,111 @@ def test_cam_icu_compliance_rejects_generic_icu_compliance_trials() -> None:
     assert scored["topic_match_level"] in {"background", "noise"}
     assert scored["tier"] in {"Tier 4: Low priority", "Noise / manual review"}
     assert scored["reading_section"] == "Low-priority/background papers"
+
+
+def test_generic_named_concept_query_uses_exact_cascade_without_topic_file() -> None:
+    context = SearchContext(
+        topic="lactate clearance index",
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+
+    layers = build_search_layers(context, candidate_depth=50)
+    layer_names = [layer.name for layer in layers]
+    joined_queries = " ".join(layer.query for layer in layers)
+
+    assert topic_profile(context.topic) is None
+    assert detect_query_type(context) == "Specific named concept"
+    assert topic_profile_for_context(context)["key"] == "_inferred_exact_named_concept"
+    assert layer_names[:3] == [
+        "Exact phrase",
+        "Phrase + clinical context",
+        "Exact concept clinical studies",
+    ]
+    assert "Broad" not in layer_names
+    assert '"lactate clearance index"[Title/Abstract]' in joined_queries
+
+
+def test_generic_named_concept_keeps_component_only_papers_background() -> None:
+    context = SearchContext(
+        topic="lactate clearance index",
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    direct = {
+        "title": "Lactate clearance index predicts mortality in septic shock",
+        "abstract": "The lactate clearance index was validated as a prognostic marker in critically ill patients.",
+        "publication_types": ["Journal Article", "Observational Study"],
+        "journal": "Critical Care",
+        "pmid": "888",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/888/",
+        "citation_count": 12,
+        "citation_source": "OpenAlex",
+        "year": 2024,
+    }
+    component = {
+        "title": "Lactate clearance predicts mortality in sepsis",
+        "abstract": "This cohort examined lactate clearance without evaluating a formal clearance index.",
+        "publication_types": ["Journal Article", "Observational Study"],
+        "journal": "Intensive Care Medicine",
+        "pmid": "889",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/889/",
+        "citation_count": 300,
+        "citation_source": "OpenAlex",
+        "year": 2024,
+    }
+
+    direct_scored = score_and_classify_paper(direct, context, {})
+    component_scored = score_and_classify_paper(component, context, {})
+
+    assert direct_scored["topic_match_level"] == "direct"
+    assert direct_scored["reading_section"] == "Direct concept papers"
+    assert component_scored["topic_match_level"] == "background"
+    assert component_scored["reading_section"] == "Low-priority/background papers"
+
+
+def test_broad_clinical_topic_does_not_trigger_exact_concept_cascade() -> None:
+    context = SearchContext(
+        topic="septic shock",
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+
+    layers = build_search_layers(context, candidate_depth=50)
+    layer_names = [layer.name for layer in layers]
+
+    assert detect_query_type(context) == "Broad clinical topic"
+    assert "Broad" in layer_names
+    assert "Exact phrase" not in layer_names
+
+
+def test_specific_subtopic_inside_broad_profile_uses_generic_exact_cascade() -> None:
+    context = SearchContext(
+        topic="mechanical power",
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+
+    layers = build_search_layers(context, candidate_depth=50)
+    joined_queries = " ".join(layer.query for layer in layers)
+
+    assert topic_profile(context.topic)["key"] == "ventilator_induced_lung_injury"
+    assert topic_profile_for_context(context)["key"] == "_inferred_exact_named_concept"
+    assert layers[0].name == "Exact phrase"
+    assert '"mechanical power"[Title/Abstract]' in joined_queries
+    assert "ventilator-induced lung injury" not in layers[0].query.lower()
+
+
+def test_specific_authored_profile_can_use_exact_cascade_without_abe_flag() -> None:
+    context = SearchContext(
+        topic=expand_acronyms("complianse of cam icu"),
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+
+    layers = build_search_layers(context, candidate_depth=50)
+    joined_queries = " ".join(layer.query for layer in layers).lower()
+
+    assert detect_query_type(context) == "Specific named concept"
+    assert topic_profile_for_context(context)["query_strategy"] == "exact_named_concept"
+    assert layers[0].name == "Exact phrase"
+    assert '"cam icu"[title/abstract]' in joined_queries
+    assert "compliance" in layers[1].query.lower()
 
 
 def test_exact_named_concept_layers_are_phrase_locked_for_abe() -> None:
