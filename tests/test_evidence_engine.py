@@ -13,6 +13,8 @@ from paper_finder import (
     expand_acronyms,
     score_and_classify_paper,
     search_purpose_config,
+    should_fetch_exact_concept_fallbacks,
+    topic_profile,
     user_intent_terms,
 )
 
@@ -541,4 +543,94 @@ def test_cam_icu_compliance_rejects_generic_icu_compliance_trials() -> None:
 
     assert scored["topic_match_level"] in {"background", "noise"}
     assert scored["tier"] in {"Tier 4: Low priority", "Noise / manual review"}
+    assert scored["reading_section"] == "Low-priority/background papers"
+
+
+def test_exact_named_concept_layers_are_phrase_locked_for_abe() -> None:
+    context = SearchContext(
+        topic="alactic base excess",
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+
+    layers = build_search_layers(context, candidate_depth=50)
+    layer_names = [layer.name for layer in layers]
+    joined_queries = " ".join(layer.query for layer in layers)
+
+    assert layer_names[:3] == [
+        "Exact phrase",
+        "Phrase + clinical context",
+        "Exact concept clinical studies",
+    ]
+    assert '"alactic base excess"[Title/Abstract]' in joined_queries
+    assert "ABE[Title/Abstract] AND lactate[Title/Abstract]" in joined_queries
+    assert "ABE[Title/Abstract]" not in layers[0].query
+
+
+def test_exact_named_concept_fallback_stop_rule_for_abe() -> None:
+    profile = topic_profile("alactic base excess")
+
+    assert profile is not None
+    assert should_fetch_exact_concept_fallbacks(profile, SEARCH_PURPOSE_RESEARCH, direct_count=2)
+    assert not should_fetch_exact_concept_fallbacks(profile, SEARCH_PURPOSE_RESEARCH, direct_count=7)
+    assert should_fetch_exact_concept_fallbacks(profile, SEARCH_PURPOSE_DEEP, direct_count=7)
+
+
+def test_abe_direct_papers_outrank_component_background() -> None:
+    context = SearchContext(
+        topic="alactic base excess",
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    direct = {
+        "title": "Alactic base excess predicts mortality and acute kidney injury in sepsis",
+        "abstract": "Alactic base excess was evaluated with lactate and standard base excess in septic shock.",
+        "publication_types": ["Journal Article", "Observational Study"],
+        "journal": "Critical Care",
+        "pmid": "555",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/555/",
+        "citation_count": 12,
+        "citation_source": "OpenAlex",
+        "year": 2022,
+    }
+    component = {
+        "title": "Standard base excess and lactate in septic shock",
+        "abstract": "A cohort study assessed lactate and standard base excess for mortality prediction in sepsis.",
+        "publication_types": ["Journal Article", "Observational Study"],
+        "journal": "Intensive Care Medicine",
+        "pmid": "666",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/666/",
+        "citation_count": 250,
+        "citation_source": "OpenAlex",
+        "year": 2022,
+    }
+
+    direct_scored = score_and_classify_paper(direct, context, {})
+    component_scored = score_and_classify_paper(component, context, {})
+
+    assert direct_scored["topic_match_level"] == "direct"
+    assert direct_scored["reading_section"] == "Direct concept papers"
+    assert component_scored["topic_match_level"] in {"strong_component", "abstract_only"}
+    assert component_scored["reading_section"] == "Near-direct clinical papers"
+
+
+def test_abe_excludes_sports_alactic_noise() -> None:
+    context = SearchContext(
+        topic="alactic base excess",
+        search_purpose=SEARCH_PURPOSE_RESEARCH,
+    )
+    sports = {
+        "title": "Anaerobic alactic energy system in sprint athletes",
+        "abstract": "Sports physiology study of alactic energy, phosphagen metabolism, and sprint performance.",
+        "publication_types": ["Journal Article"],
+        "journal": "Sports Medicine",
+        "pmid": "777",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/777/",
+        "citation_count": 500,
+        "citation_source": "OpenAlex",
+        "year": 2023,
+    }
+
+    scored = score_and_classify_paper(sports, context, {})
+
+    assert scored["topic_match_level"] == "noise"
+    assert scored["tier"] == "Noise / manual review"
     assert scored["reading_section"] == "Low-priority/background papers"

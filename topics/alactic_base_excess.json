@@ -1,0 +1,188 @@
+{
+  "key": "alactic_base_excess",
+  "display_name": "Alactic base excess",
+  "query_strategy": "exact_named_concept",
+  "fallback_direct_threshold": 5,
+  "triggers": [
+    "alactic base excess",
+    "alactic-base excess",
+    "abe and lactate",
+    "abe sepsis base excess",
+    "abe standard base excess"
+  ],
+  "exact_phrases": [
+    "alactic base excess",
+    "alactic-base excess"
+  ],
+  "direct_phrases": [
+    "alactic base excess",
+    "alactic-base excess"
+  ],
+  "direct_acronyms": [
+    "abe"
+  ],
+  "acronym_context": [
+    "base excess",
+    "standard base excess",
+    "lactate",
+    "sepsis",
+    "septic shock",
+    "acute kidney injury",
+    "critical care",
+    "intensive care"
+  ],
+  "direct_synonyms": [],
+  "context_terms": [
+    "sepsis",
+    "septic shock",
+    "mortality",
+    "acute kidney injury",
+    "lactate",
+    "standard base excess",
+    "critical care",
+    "intensive care"
+  ],
+  "component_concepts": [
+    "alactic base excess",
+    "standard base excess",
+    "base excess adjusted for lactate",
+    "lactate-adjusted base excess",
+    "lactate",
+    "sepsis",
+    "acute kidney injury",
+    "mortality",
+    "critical illness"
+  ],
+  "family_terms": [
+    "base excess",
+    "standard base excess",
+    "lactate",
+    "metabolic acidosis",
+    "acid-base",
+    "sepsis",
+    "critical illness"
+  ],
+  "must_include_concepts": [
+    "alactic base excess",
+    "base excess",
+    "standard base excess",
+    "lactate",
+    "sepsis",
+    "mortality",
+    "acute kidney injury"
+  ],
+  "required_concept_groups": [
+    [
+      [
+        "alactic base excess",
+        "alactic-base excess"
+      ]
+    ],
+    [
+      [
+        "abe"
+      ],
+      [
+        "base excess",
+        "standard base excess"
+      ],
+      [
+        "lactate",
+        "sepsis",
+        "septic shock",
+        "critical care",
+        "intensive care"
+      ]
+    ],
+    [
+      [
+        "standard base excess",
+        "base excess"
+      ],
+      [
+        "lactate"
+      ],
+      [
+        "sepsis",
+        "septic shock",
+        "critical illness",
+        "acute kidney injury",
+        "mortality"
+      ]
+    ]
+  ],
+  "wrong_terms": [
+    "alactic energy",
+    "anaerobic alactic",
+    "alactic anaerobic",
+    "alactic metabolism",
+    "phosphagen",
+    "sprint",
+    "sports",
+    "athlete",
+    "athletes",
+    "exercise physiology",
+    "dental base",
+    "denture base",
+    "preprosthetic",
+    "base resin",
+    "alkaline base",
+    "acid-base extraction"
+  ],
+  "penalize": [
+    {
+      "name": "sports-alactic-noise",
+      "match_terms": [
+        "alactic energy",
+        "anaerobic alactic",
+        "phosphagen",
+        "sprint",
+        "sports",
+        "athlete",
+        "exercise physiology"
+      ],
+      "score": -35,
+      "reason": "Sports/energy-system use of alactic, not alactic base excess"
+    },
+    {
+      "name": "dental-base-noise",
+      "match_terms": [
+        "dental base",
+        "denture base",
+        "preprosthetic",
+        "base resin"
+      ],
+      "score": -35,
+      "reason": "Dental/prosthetic base paper, not alactic base excess"
+    }
+  ],
+  "query_expansion_terms": [
+    "alactic base excess",
+    "standard base excess",
+    "lactate-adjusted base excess",
+    "base excess adjusted for lactate",
+    "sepsis",
+    "acute kidney injury",
+    "mortality"
+  ],
+  "guarded_acronym_queries": [
+    "ABE[Title/Abstract] AND lactate[Title/Abstract] AND \"base excess\"[Title/Abstract]",
+    "ABE[Title/Abstract] AND sepsis[Title/Abstract] AND \"standard base excess\"[Title/Abstract]",
+    "ABE[Title/Abstract] AND \"acute kidney injury\"[Title/Abstract] AND \"base excess\"[Title/Abstract]",
+    "ABE[Title/Abstract] AND SBE[Title/Abstract] AND lactate[Title/Abstract]"
+  ],
+  "component_fallback_queries": [
+    "lactate[Title/Abstract] AND \"base excess\"[Title/Abstract] AND sepsis[Title/Abstract]",
+    "\"standard base excess\"[Title/Abstract] AND \"septic shock\"[Title/Abstract]",
+    "\"standard base excess\"[Title/Abstract] AND \"acute kidney injury\"[Title/Abstract]",
+    "\"metabolic acidosis\"[Title/Abstract] AND lactate[Title/Abstract] AND \"critical illness\"[Title/Abstract]"
+  ],
+  "background_terms": [
+    "acid-base physiology",
+    "metabolic acidosis",
+    "standard base excess",
+    "strong ion difference",
+    "stewart acid-base"
+  ],
+  "pubmed_query": "\"alactic base excess\"[Title/Abstract] OR \"alactic-base excess\"[Title/Abstract] OR (ABE[Title/Abstract] AND lactate[Title/Abstract] AND \"base excess\"[Title/Abstract]) OR (ABE[Title/Abstract] AND sepsis[Title/Abstract] AND \"standard base excess\"[Title/Abstract]) OR (\"standard base excess\"[Title/Abstract] AND lactate[Title/Abstract] AND (sepsis[Title/Abstract] OR \"septic shock\"[Title/Abstract] OR \"acute kidney injury\"[Title/Abstract] OR mortality[Title/Abstract]))"
+}

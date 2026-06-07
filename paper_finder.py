@@ -589,6 +589,151 @@ class SearchLayer:
     retmax: int | None = None
 
 
+def exact_named_concept_profile(profile: dict[str, Any] | None) -> bool:
+    return bool(profile and profile.get("query_strategy") == "exact_named_concept")
+
+
+def pubmed_or_clause(terms: list[str], field: str = "Title/Abstract") -> str:
+    clauses = [
+        clause
+        for clause in (pubmed_term_clause(str(term).strip(), field) for term in terms)
+        if clause
+    ]
+    return " OR ".join(dict.fromkeys(clauses))
+
+
+def build_exact_concept_search_layers(
+    context: SearchContext,
+    profile: dict[str, Any],
+    candidate_depth: int,
+) -> list[SearchLayer]:
+    purpose = normalized_search_purpose(context.search_purpose)
+    exact_terms = clean_term_list(
+        [str(term) for term in profile.get("exact_phrases", [])]
+        or [str(term) for term in profile.get("direct_phrases", [])]
+    )
+    context_terms = clean_term_list([str(term) for term in profile.get("context_terms", [])])
+    exact_clause = pubmed_or_clause(exact_terms)
+    context_clause = pubmed_or_clause(context_terms)
+    guarded_acronym_queries = [
+        normalize_space(str(query))
+        for query in profile.get("guarded_acronym_queries", [])
+        if normalize_space(str(query))
+    ]
+    fallback_queries = [
+        normalize_space(str(query))
+        for query in profile.get("component_fallback_queries", [])
+        if normalize_space(str(query))
+    ]
+    mechanism_terms = clean_term_list([str(term) for term in profile.get("background_terms", [])])
+    mechanism_clause = pubmed_or_clause(mechanism_terms)
+
+    direct_retmax = max(25, min(candidate_depth, 80))
+    fallback_retmax = max(30, min(candidate_depth // 2, 80))
+    review_clause = (
+        'review[Publication Type] OR review OR "narrative review" OR "clinical review" OR '
+        '"practical review" OR "state of the art" OR guideline[Publication Type] OR consensus'
+    )
+    clinical_design_clause = (
+        '"randomized controlled trial"[Publication Type] OR cohort OR observational OR '
+        'diagnostic OR prognostic OR validation OR mortality OR "acute kidney injury" OR sepsis'
+    )
+
+    layers: list[SearchLayer] = []
+    if exact_clause:
+        layers.append(
+            SearchLayer(
+                name="Exact phrase",
+                purpose="Start with the complete named concept before any expansion.",
+                query=f"({exact_clause})",
+                retmax=direct_retmax,
+            )
+        )
+        if context_clause:
+            layers.append(
+                SearchLayer(
+                    name="Phrase + clinical context",
+                    purpose="Expand only while the exact concept remains phrase-locked.",
+                    query=f"({exact_clause}) AND ({context_clause})",
+                    retmax=direct_retmax,
+                )
+            )
+        if purpose == SEARCH_PURPOSE_KNOWLEDGE:
+            layers.append(
+                SearchLayer(
+                    name="Exact concept reviews",
+                    purpose="Find concept-defining reviews without releasing the exact phrase lock.",
+                    query=f"({exact_clause}) AND ({review_clause})",
+                    retmax=max(25, candidate_depth // 2),
+                )
+            )
+        elif purpose == SEARCH_PURPOSE_RESEARCH:
+            layers.append(
+                SearchLayer(
+                    name="Exact concept clinical studies",
+                    purpose="Prioritize prognostic, diagnostic, cohort, and validation studies for named concepts.",
+                    query=f"({exact_clause}) AND ({clinical_design_clause})",
+                    retmax=max(30, candidate_depth // 2),
+                )
+            )
+
+    if guarded_acronym_queries:
+        layers.append(
+            SearchLayer(
+                name="Guarded acronym/formula",
+                purpose="Use acronyms only with required biomedical anchors.",
+                query=" OR ".join(f"({query})" for query in guarded_acronym_queries),
+                retmax=fallback_retmax,
+            )
+        )
+
+    if fallback_queries:
+        layers.append(
+            SearchLayer(
+                name="Component fallback",
+                purpose="Use only when direct named-concept papers are insufficient; label as background.",
+                query=" OR ".join(f"({query})" for query in fallback_queries),
+                retmax=fallback_retmax,
+            )
+        )
+    if mechanism_clause:
+        layers.append(
+            SearchLayer(
+                name="Parent/mechanism fallback",
+                purpose="Mechanism/background material only; never outranks direct concept papers.",
+                query=f"({mechanism_clause}) AND ({review_clause})",
+                retmax=max(25, candidate_depth // 3),
+            )
+        )
+    return layers
+
+
+def exact_concept_fallback_layer(layer: SearchLayer) -> bool:
+    name = layer.name.lower()
+    return "fallback" in name or "mechanism" in name or "background" in name
+
+
+def count_direct_concept_papers(papers: list[dict[str, Any]], context: SearchContext) -> int:
+    direct_levels = {"direct", "direct_synonym", "abstract_only"}
+    count = 0
+    for paper in papers:
+        gate = classify_topic_match(paper.get("title", ""), paper.get("abstract", ""), context)
+        if gate.get("level") in direct_levels:
+            count += 1
+    return count
+
+
+def should_fetch_exact_concept_fallbacks(
+    profile: dict[str, Any],
+    purpose: str,
+    direct_count: int,
+) -> bool:
+    if normalized_search_purpose(purpose) == SEARCH_PURPOSE_DEEP:
+        return True
+    threshold = int(profile.get("fallback_direct_threshold", 5) or 5)
+    return direct_count < threshold
+
+
 def build_search_layers(
     context: SearchContext,
     candidate_depth: int = 50,
@@ -597,6 +742,9 @@ def build_search_layers(
 ) -> list[SearchLayer]:
     purpose = normalized_search_purpose(context.search_purpose)
     topic = context.topic.strip()
+    profile = topic_profile(topic)
+    if exact_named_concept_profile(profile):
+        return build_exact_concept_search_layers(context, profile, candidate_depth)
     topic_query = build_topic_query(topic, email=email, api_key=api_key)
     recent_start_year = max(1900, context.current_year - 2)
     ico_clause = (
@@ -934,6 +1082,7 @@ def run_quality_first_search(
         email=email,
         api_key=ncbi_api_key,
     )
+    active_profile = topic_profile(context.topic)
     discovered_mesh = discover_mesh(context.topic, email=email, api_key=ncbi_api_key)
     all_papers: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -978,24 +1127,56 @@ def run_quality_first_search(
 
     total_layers = len(layers)
     completed_layers = 0
-    layer_workers = 4 if ncbi_api_key.strip() else 2
-    _notify(f"Starting {total_layers} parallel PubMed searches", 0, total_layers)
-    with ThreadPoolExecutor(max_workers=layer_workers) as executor:
-        futures = [executor.submit(_fetch_layer, layer) for layer in layers]
-        for future in as_completed(futures):
-            layer, ids, papers, error = future.result()
-            completed_layers += 1
-            if error:
-                errors.append(error)
-                _notify(f"Layer '{layer.name}' failed", completed_layers, total_layers)
-            else:
-                automatically_retrieved_pmids.update(ids)
-                all_papers.extend(papers)
-                _notify(
-                    f"Layer '{layer.name}' done — {len(papers)} candidates",
-                    completed_layers,
-                    total_layers,
-                )
+
+    def _fetch_layers(layers_to_fetch: list[SearchLayer], completed: int) -> int:
+        if not layers_to_fetch:
+            return completed
+        layer_workers = 4 if ncbi_api_key.strip() else 2
+        layer_workers = min(layer_workers, max(1, len(layers_to_fetch)))
+        with ThreadPoolExecutor(max_workers=layer_workers) as executor:
+            futures = [executor.submit(_fetch_layer, layer) for layer in layers_to_fetch]
+            for future in as_completed(futures):
+                layer, ids, papers, error = future.result()
+                completed += 1
+                if error:
+                    errors.append(error)
+                    _notify(f"Layer '{layer.name}' failed", completed, total_layers)
+                else:
+                    automatically_retrieved_pmids.update(ids)
+                    all_papers.extend(papers)
+                    _notify(
+                        f"Layer '{layer.name}' done — {len(papers)} candidates",
+                        completed,
+                        total_layers,
+                    )
+        return completed
+
+    _notify(f"Starting {total_layers} PubMed search layers", 0, total_layers)
+    if exact_named_concept_profile(active_profile):
+        primary_layers = [layer for layer in layers if not exact_concept_fallback_layer(layer)]
+        fallback_layers = [layer for layer in layers if exact_concept_fallback_layer(layer)]
+        completed_layers = _fetch_layers(primary_layers, completed_layers)
+        direct_count = count_direct_concept_papers(all_papers, context)
+        if should_fetch_exact_concept_fallbacks(
+            active_profile,
+            context.search_purpose,
+            direct_count,
+        ):
+            _notify(
+                f"Direct concept set has {direct_count} papers; running controlled fallback",
+                completed_layers,
+                total_layers,
+            )
+            completed_layers = _fetch_layers(fallback_layers, completed_layers)
+        elif fallback_layers:
+            completed_layers += len(fallback_layers)
+            _notify(
+                f"Direct concept set has {direct_count} papers; skipped broad fallback",
+                completed_layers,
+                total_layers,
+            )
+    else:
+        completed_layers = _fetch_layers(layers, completed_layers)
 
     _notify("Running API discovery supervisor", total_layers, total_layers)
     try:
@@ -1229,6 +1410,7 @@ def run_api_discovery_supervisor(
     errors: list[str] = []
     warnings: list[str] = []
     purpose = normalized_search_purpose(context.search_purpose)
+    exact_concept = exact_named_concept_profile(topic_profile(context.topic))
 
     def add_pmids(found_pmids: list[str], layer: str, query: str, reason: str) -> None:
         clean_pmids = []
@@ -1340,7 +1522,7 @@ def run_api_discovery_supervisor(
     else:
         warnings.append("API supervisor - Unpaywall skipped: configure an email in app secrets to use the Unpaywall API.")
 
-    if purpose != SEARCH_PURPOSE_KNOWLEDGE:
+    if purpose != SEARCH_PURPOSE_KNOWLEDGE and not exact_concept:
         for layer_name, query, page_size, reason in api_supervisor_clinicaltrials_queries(context, per_query_limit):
             try:
                 records = search_clinicaltrials_records(query, page_size=page_size)
@@ -1355,11 +1537,16 @@ def run_api_discovery_supervisor(
             except requests.RequestException as exc:
                 errors.append(f"{layer_name} failed: {friendly_request_error(exc)}")
     else:
-        warnings.append(
-            "API supervisor - trial registry and preprint sweeps skipped in learning mode to keep the reading pack review-first."
-        )
+        if exact_concept:
+            warnings.append(
+                "API supervisor - trial registry, preprint, and related-paper sweeps skipped for exact named concept search."
+            )
+        else:
+            warnings.append(
+                "API supervisor - trial registry and preprint sweeps skipped in learning mode to keep the reading pack review-first."
+            )
 
-    related_seed_pmids = [] if purpose == SEARCH_PURPOSE_KNOWLEDGE else pmids[:3]
+    related_seed_pmids = [] if purpose == SEARCH_PURPOSE_KNOWLEDGE or exact_concept else pmids[:3]
     related_pmids: list[str] = []
     if related_seed_pmids:
         try:
@@ -1664,8 +1851,13 @@ def api_supervisor_keywords(context: SearchContext) -> list[str]:
     profile = topic_profile(topic)
     raw_terms: list[str] = []
     if profile:
-        raw_terms.extend(str(term) for term in profile.get("query_expansion_terms", [])[:6])
-        raw_terms.extend(str(term) for term in profile.get("must_include_concepts", [])[:6])
+        if exact_named_concept_profile(profile):
+            raw_terms.extend(str(term) for term in profile.get("exact_phrases", [])[:4])
+            raw_terms.extend(str(term) for term in profile.get("direct_phrases", [])[:4])
+            raw_terms.extend(str(term) for term in profile.get("context_terms", [])[:4])
+        else:
+            raw_terms.extend(str(term) for term in profile.get("query_expansion_terms", [])[:6])
+            raw_terms.extend(str(term) for term in profile.get("must_include_concepts", [])[:6])
     raw_terms.extend(user_intent_terms(context))
     raw_terms.extend(keywords(topic))
     raw_terms.extend(keywords(context.population))
@@ -3203,8 +3395,9 @@ def semantic_topic_terms(topic: str, profile: dict[str, Any] | None = None) -> d
     # as synonyms (gated by component presence).
     synonym_terms = []
     synonym_terms.extend(str(term).lower() for term in profile.get("direct_synonyms", []) if term)
-    synonym_terms.extend(str(term).lower() for term in profile.get("query_expansion_terms", []) if term)
-    synonym_terms.extend(str(term).lower() for term in profile.get("direct_acronyms", []) if term)
+    if not exact_named_concept_profile(profile):
+        synonym_terms.extend(str(term).lower() for term in profile.get("query_expansion_terms", []) if term)
+        synonym_terms.extend(str(term).lower() for term in profile.get("direct_acronyms", []) if term)
     component_terms = list(components)
     component_terms.extend(component_variants)
     component_terms.extend(str(term).lower() for term in profile.get("component_concepts", []) if term)
@@ -4332,6 +4525,15 @@ def mode_specific_tier_cap(paper: dict[str, Any], context: SearchContext) -> tup
     text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
     rare_signal = has_any(text, RARE_CASE_TERMS)
     requested_terms = user_intent_terms(context)
+    topic_level = paper.get("topic_match_level", "")
+
+    if exact_named_concept_profile(topic_profile(context.topic)) and topic_level in {
+        "parent",
+        "parallel",
+        "background",
+        "noise",
+    }:
+        return 4, "exact named-concept search keeps component/mechanism fallback below direct concept papers"
 
     if (
         requested_terms
@@ -4425,6 +4627,15 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
     text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
     rare_signal = has_any(text, RARE_CASE_TERMS)
     recent = bool(paper.get("year") and context.current_year - paper["year"] <= 3)
+
+    if exact_named_concept_profile(topic_profile(context.topic)):
+        if topic_level in {"direct", "direct_synonym"}:
+            return "Direct concept papers"
+        if topic_level in {"strong_component", "abstract_only"}:
+            return "Near-direct clinical papers"
+        if topic_level in {"parent", "partial", "parallel", "background"} and tier_order < 4:
+            return "Component/background papers"
+        return "Low-priority/background papers"
 
     if purpose == SEARCH_PURPOSE_KNOWLEDGE:
         if design in {"Narrative review", "Landmark physiological review"}:
@@ -4522,25 +4733,34 @@ def assign_reading_section(paper: dict[str, Any], context: SearchContext) -> str
 def reading_section_order(search_mode: str) -> dict[str, int]:
     sections = {
         SEARCH_PURPOSE_KNOWLEDGE: [
+            "Direct concept papers",
+            "Near-direct clinical papers",
             "Best narrative reviews",
             "Guidelines and consensus",
             "Foundational concepts",
             "Landmark clinical papers",
             "Evidence synthesis",
             "Recent updates",
+            "Component/background papers",
             "Background papers",
+            "Low-priority/background papers",
         ],
         SEARCH_PURPOSE_RESEARCH: [
+            "Direct concept papers",
+            "Near-direct clinical papers",
             "Key original research papers",
             "Randomized controlled trials",
             "Observational/cohort studies",
             "Systematic reviews/meta-analyses",
             "Research gaps",
             "Methods/outcome-defining papers",
+            "Component/background papers",
             "Background reviews",
             "Low-priority/background papers",
         ],
         SEARCH_PURPOSE_DEEP: [
+            "Direct concept papers",
+            "Near-direct clinical papers",
             "Landmark/core papers",
             "Reviews and meta-analyses",
             "Trials",
@@ -4549,17 +4769,22 @@ def reading_section_order(search_mode: str) -> dict[str, int]:
             "Special populations",
             "Case reports/case series",
             "Editorials/correspondence",
+            "Component/background papers",
             "Low-priority/background papers",
         ],
         SEARCH_PURPOSE_RARE: [
+            "Direct concept papers",
+            "Near-direct clinical papers",
             "Closest matching case reports",
             "Case series",
             "Rare complications",
             "Rare associations",
             "Unusual diagnostic findings",
             "Editorials/correspondence",
+            "Component/background papers",
             "Background references",
             "Tier 4 / weak but related papers",
+            "Low-priority/background papers",
         ],
     }.get(normalized_search_purpose(search_mode), [])
     fallback = ["Core reading pack", "Extended evidence base", "Low-priority / indirect papers"]
