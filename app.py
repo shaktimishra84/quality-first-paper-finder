@@ -879,16 +879,21 @@ def render_search_form() -> tuple[str, str, dict, bool]:
     return topic, search_purpose, purpose_config, submitted
 
 
-def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, str, object]:
+def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, str, str, str, str, str, object]:
     google_notes = ""
     email = app_secret("ncbi_email") or app_secret("contact_email") or app_secret("email")
     ncbi_api_key = app_secret("ncbi_api_key")
+    claude_api_key = app_secret("claude_api_key") or app_secret("anthropic_api_key")
+    claude_model = app_secret("claude_model") or app_secret("anthropic_model") or "claude-sonnet-5"
     gemini_api_key = (
         app_secret("gemini_api_key")
         or app_secret("google_api_key")
         or app_secret("gemini_key")
         or app_secret("gemini")
     )
+    ai_api_key = claude_api_key or gemini_api_key
+    ai_provider = "claude" if claude_api_key else "gemini" if gemini_api_key else ""
+    ai_model = claude_model if claude_api_key else ""
     semantic_scholar_api_key = app_secret("semantic_scholar_api_key") or app_secret("s2_api_key")
     quartile_file = None
     with st.sidebar:
@@ -919,6 +924,9 @@ def render_advanced_sidebar() -> tuple[str, str, str, str, str, str, str, str, s
         email,
         ncbi_api_key,
         gemini_api_key,
+        ai_api_key,
+        ai_provider,
+        ai_model,
         semantic_scholar_api_key,
         quartile_file,
     )
@@ -938,6 +946,9 @@ def main() -> None:
         email,
         ncbi_api_key,
         gemini_api_key,
+        ai_api_key,
+        ai_provider,
+        ai_model,
         semantic_scholar_api_key,
         quartile_file,
     ) = render_advanced_sidebar()
@@ -970,6 +981,12 @@ def main() -> None:
             context_kwargs.pop("search_purpose", None)
         if "gemini_api_key" in context_fields:
             context_kwargs["gemini_api_key"] = gemini_api_key
+        if "ai_api_key" in context_fields:
+            context_kwargs["ai_api_key"] = ai_api_key
+        if "ai_provider" in context_fields:
+            context_kwargs["ai_provider"] = ai_provider
+        if "ai_model" in context_fields:
+            context_kwargs["ai_model"] = ai_model
         context = SearchContext(**context_kwargs)
         with st.status("Preparing verified source search...", expanded=True) as status:
             status.write("- Building search layers and topic gates")
@@ -1109,7 +1126,7 @@ def main() -> None:
         render_tier_groups(df, full_df, tiers=(3, 4), allow_select_all=False)
 
     with tabs[3]:
-        render_evidence_review(result, gemini_api_key)
+        render_evidence_review(result, ai_api_key, ai_provider, ai_model)
 
     with tabs[4]:
         render_expected_papers(result)
@@ -1183,9 +1200,9 @@ def render_results_header(result: dict, df: pd.DataFrame, topic: str) -> None:
         if is_primed and primer_status == "cached":
             chips.append(context_chip("Primer cached this session", "muted"))
     elif primer_status == "unavailable":
-        chips.append(context_chip("Primer unavailable — add a Gemini key in the sidebar", "muted"))
+        chips.append(context_chip("Primer unavailable — add a Claude API key in app secrets", "muted"))
     elif primer_status == "error":
-        chips.append(context_chip("Primer error — Gemini key present but the call failed (check model/quota)", "warn"))
+        chips.append(context_chip("Primer error — AI key present but the provider call failed (check model/quota)", "warn"))
 
     mesh_records = result.get("mesh_discovered", []) or []
     descriptor_names = [
@@ -1918,14 +1935,20 @@ def render_knowledge_summary(summary: dict) -> None:
             st.markdown(f"- {line}")
 
 
-def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
+def render_evidence_review(
+    result: dict,
+    ai_api_key: str = "",
+    ai_provider: str = "",
+    ai_model: str = "",
+) -> None:
     st.subheader("Medical Evidence Review")
     st.caption("Structured synthesis with source IDs, evidence hierarchy, verification caveats, and gaps.")
+    provider_label = "Claude" if ai_provider == "claude" else "Gemini" if ai_provider == "gemini" else "AI"
 
     enable_ai = False
-    if gemini_api_key:
+    if ai_api_key:
         enable_ai = st.checkbox(
-            "Add AI evidence synthesis (Gemini, source-grounded)",
+            f"Add AI evidence synthesis ({provider_label}, source-grounded)",
             value=st.session_state.get("evidence_ai_enabled", False),
             key="evidence_ai_enabled",
             help=(
@@ -1934,18 +1957,25 @@ def render_evidence_review(result: dict, gemini_api_key: str = "") -> None:
             ),
         )
     else:
-        st.caption("Add a `gemini_api_key` secret to enable optional AI evidence synthesis.")
+        st.caption("Add a `claude_api_key` or `anthropic_api_key` secret to enable optional AI evidence synthesis.")
 
     if enable_ai:
-        cache_key = (st.session_state.get("last_topic", ""), len(result.get("papers", [])))
+        cache_key = (
+            st.session_state.get("last_topic", ""),
+            len(result.get("papers", [])),
+            ai_provider,
+            ai_model,
+        )
         cached = st.session_state.get("_ai_review_cache") or {}
         if cached.get("key") == cache_key and cached.get("review"):
             review = cached["review"]
         else:
-            with st.spinner("Synthesizing verified evidence with Gemini..."):
+            with st.spinner(f"Synthesizing verified evidence with {provider_label}..."):
                 review = build_evidence_review(
                     result,
-                    gemini_key=gemini_api_key,
+                    ai_key=ai_api_key,
+                    ai_provider=ai_provider,
+                    ai_model=ai_model,
                     generate_ai_gaps=True,
                     generate_ai_synthesis=True,
                 )

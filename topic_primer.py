@@ -1,6 +1,6 @@
 """LLM-powered topic primer for the literature search app.
 
-Calls Gemini once per topic to generate a structured "primer" that helps the
+Calls the configured AI provider once per topic to generate a structured "primer" that helps the
 deterministic ranking pipeline behave like a clinical-evidence librarian for
 *any* medical topic — not just topics with a hand-authored profile JSON.
 
@@ -26,7 +26,15 @@ from typing import Any
 
 import requests
 
-from evidence_engine import GEMINI_API_BASE, resolve_gemini_model
+from evidence_engine import (
+    AI_PROVIDER_CLAUDE,
+    AI_PROVIDER_GEMINI,
+    GEMINI_API_BASE,
+    call_ai_json,
+    extract_json_object,
+    normalize_ai_provider,
+    resolve_gemini_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -285,12 +293,24 @@ def _call_gemini(topic: str, gemini_key: str) -> dict[str, Any]:
     if not raw_text:
         raise ValueError("Gemini returned empty content")
     try:
-        parsed = json.loads(raw_text)
+        return extract_json_object(raw_text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Gemini returned invalid JSON: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise ValueError("Gemini returned non-object JSON")
-    return parsed
+
+
+def _call_claude(topic: str, claude_key: str, claude_model: str = "") -> dict[str, Any]:
+    """POST a single request to Claude and return the parsed JSON payload."""
+    return call_ai_json(
+        system=PROMPT_INSTRUCTIONS,
+        prompt=f"Topic: {topic}",
+        schema=GEMINI_RESPONSE_SCHEMA,
+        api_key=claude_key,
+        provider=AI_PROVIDER_CLAUDE,
+        model=claude_model,
+        temperature=0.2,
+        max_tokens=4096,
+        timeout=PRIMER_TIMEOUT_S,
+    )
 
 
 def _normalize_text(text: str) -> set[str]:
@@ -496,18 +516,21 @@ _PRIMER_CACHE: dict[str, TopicPrimer | None] = {}
 
 def prime_topic(
     topic: str,
-    gemini_key: str,
+    gemini_key: str = "",
     email: str = "",
     api_key: str = "",
+    ai_provider: str = AI_PROVIDER_GEMINI,
+    ai_model: str = "",
 ) -> TopicPrimer | None:
     """Return a TopicPrimer for the given topic, or None on failure.
 
     Cached in-process by normalized topic. Repeat calls within the same
     process return a copy with status='cached'.
     """
+    active_provider = normalize_ai_provider(ai_provider, api_key=gemini_key)
     if not topic or not gemini_key:
         return None
-    cache_key = _normalize_topic_key(topic)
+    cache_key = f"{active_provider}:{ai_model or ''}:{_normalize_topic_key(topic)}"
     if cache_key in _PRIMER_CACHE:
         cached = _PRIMER_CACHE[cache_key]
         if cached is None:
@@ -517,9 +540,12 @@ def prime_topic(
         return cached
 
     try:
-        payload = _call_gemini(topic, gemini_key)
+        if active_provider == AI_PROVIDER_CLAUDE:
+            payload = _call_claude(topic, gemini_key, claude_model=ai_model)
+        else:
+            payload = _call_gemini(topic, gemini_key)
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("Topic primer (Gemini call) failed for '%s': %s", topic, exc)
+        logger.warning("Topic primer (%s call) failed for '%s': %s", active_provider, topic, exc)
         _PRIMER_CACHE[cache_key] = None
         return None
 

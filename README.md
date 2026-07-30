@@ -51,8 +51,15 @@ Optional private API keys can be supplied through Streamlit secrets or matching 
 ```toml
 ncbi_email = "you@example.com"
 ncbi_api_key = "..."
+claude_api_key = "..."
+# or:
+anthropic_api_key = "..."
+# optional override; defaults to claude-sonnet-5
+claude_model = "claude-sonnet-5"
 semantic_scholar_api_key = "..."
 ```
+
+Claude is the preferred provider for optional topic priming, intent reranking, and source-grounded evidence synthesis. Legacy Gemini secrets (`gemini_api_key`, `google_api_key`, `gemini_key`, or `gemini`) still work as a fallback when no Claude key is configured.
 
 Semantic Scholar requests send the key as `x-api-key` and are throttled to stay below the approved 1 request/second limit.
 

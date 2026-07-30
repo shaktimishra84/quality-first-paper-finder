@@ -160,6 +160,23 @@ def test_prime_topic_caches_repeat_calls() -> None:
 
 
 @pytest.mark.unit
+def test_prime_topic_can_use_claude_provider() -> None:
+    fake_payload = {
+        "expected_papers": [],
+        "must_include_concepts": ["test"],
+        "penalize_rules": [],
+        "query_expansion_terms": ["alt"],
+    }
+    with patch("topic_primer._call_claude", return_value=fake_payload) as mock_call:
+        primer = prime_topic("Sepsis bundles", gemini_key="sk-ant-test", ai_provider="claude")
+
+    assert primer is not None
+    assert primer.status == "generated"
+    assert primer.must_include_concepts == ("test",)
+    mock_call.assert_called_once()
+
+
+@pytest.mark.unit
 def test_prime_topic_returns_none_on_network_failure() -> None:
     with patch("topic_primer._call_gemini", side_effect=requests.HTTPError("rate limit")):
         result = prime_topic("Anything", gemini_key="key")

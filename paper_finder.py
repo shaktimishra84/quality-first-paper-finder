@@ -664,6 +664,9 @@ class SearchContext:
     search_purpose: str = SEARCH_PURPOSE_DEFAULT
     current_year: int = date.today().year
     gemini_api_key: str = ""
+    ai_api_key: str = ""
+    ai_provider: str = ""
+    ai_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -672,6 +675,20 @@ class SearchLayer:
     purpose: str
     query: str
     retmax: int | None = None
+
+
+def context_ai_key(context: SearchContext) -> str:
+    return (context.ai_api_key or context.gemini_api_key or "").strip()
+
+
+def context_ai_provider(context: SearchContext) -> str:
+    if context.ai_provider:
+        return context.ai_provider
+    if context.ai_api_key:
+        return "claude"
+    if context.gemini_api_key:
+        return "gemini"
+    return ""
 
 
 def exact_named_concept_profile(profile: dict[str, Any] | None) -> bool:
@@ -1404,11 +1421,15 @@ def run_quality_first_search(
     if expanded_topic.strip().lower() != original_topic.strip().lower():
         context = dataclass_replace(context, topic=expanded_topic)
 
+    ai_key = context_ai_key(context)
+    ai_provider = context_ai_provider(context)
     primer_status = register_primer_if_needed(
         context.topic,
-        gemini_api_key=context.gemini_api_key,
+        gemini_api_key=ai_key,
         email=email,
         api_key=ncbi_api_key,
+        ai_provider=ai_provider,
+        ai_model=context.ai_model,
     )
 
     layers = build_search_layers(
@@ -1641,7 +1662,14 @@ def run_quality_first_search(
     primed_profile = active_profile
     if primed_profile:
         clinical_intent = str(primed_profile.get("clinical_intent", "") or "").strip()
-    intent_status = rank_by_intent(clinical_intent, context.topic, scored, context.gemini_api_key)
+    intent_status = rank_by_intent(
+        clinical_intent,
+        context.topic,
+        scored,
+        ai_key,
+        ai_provider=ai_provider,
+        ai_model=context.ai_model,
+    )
     if intent_status == "scored":
         for paper in scored:
             if (
@@ -1690,6 +1718,7 @@ def run_quality_first_search(
         "topic_primer_status": primer_status,
         "clinical_intent": clinical_intent,
         "intent_ranking_status": intent_status,
+        "ai_provider": ai_provider,
         "api_discovery": api_discovery,
         "query_type": detect_query_type(context),
         "search_purpose": context.search_purpose,
@@ -1713,7 +1742,9 @@ def run_quality_first_search(
     result["evidence_review"] = build_evidence_review(
         result,
         max_sources=int(purpose_config.get("review_max_sources", 80)),
-        gemini_key=context.gemini_api_key if purpose_config.get("ai_gap_analysis") else "",
+        ai_key=ai_key if purpose_config.get("ai_gap_analysis") else "",
+        ai_provider=ai_provider,
+        ai_model=context.ai_model,
         generate_ai_gaps=bool(purpose_config.get("ai_gap_analysis")),
     )
     return result
@@ -4248,14 +4279,16 @@ def register_primer_if_needed(
     gemini_api_key: str,
     email: str = "",
     api_key: str = "",
+    ai_provider: str = "",
+    ai_model: str = "",
 ) -> str:
     """Ensure a profile exists for `topic`. Returns one of:
 
     - 'profile'      — hand-authored topics/*.json profile matched
     - 'cached'       — primer already cached in this process
     - 'generated'    — primer just generated and registered
-    - 'unavailable'  — no profile and no Gemini key configured
-    - 'error'        — key present but the Gemini call failed (model/quota/network)
+    - 'unavailable'  — no profile and no AI provider key configured
+    - 'error'        — key present but the provider call failed (model/quota/network)
     """
     if not topic.strip():
         return "unavailable"
@@ -4273,7 +4306,14 @@ def register_primer_if_needed(
     if cache_key in _PRIMED_PROFILES:
         return "cached"
 
-    primer = prime_topic(topic, gemini_api_key, email=email, api_key=api_key)
+    primer = prime_topic(
+        topic,
+        gemini_api_key,
+        email=email,
+        api_key=api_key,
+        ai_provider=ai_provider or "gemini",
+        ai_model=ai_model,
+    )
     if primer is None:
         # Key was present but the call produced nothing — model name, quota,
         # or network. Distinct from 'unavailable' (no key at all).

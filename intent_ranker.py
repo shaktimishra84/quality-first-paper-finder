@@ -1,11 +1,11 @@
 """Intent-aware ranking: rank results by how well they match the user's
 actual clinical intent, and keep Tier 1 tight.
 
-Two signals, both optional and fail-soft (run only with a Gemini key):
-1. Embedding similarity between the LLM-written intent statement (from the
+Two signals, both optional and fail-soft:
+1. Gemini embedding similarity between the LLM-written intent statement (from the
    topic primer) and each top candidate's title+abstract — scores many papers
    cheaply.
-2. An LLM re-rank of the very top slice: the model reads each paper and rates
+2. A Claude/Gemini LLM re-rank of the very top slice: the model reads each paper and rates
    how well it matches the intent (0-100), catching cases where two papers share
    generic ICU vocabulary but are about different diseases.
 
@@ -21,7 +21,17 @@ from typing import Any
 
 import requests
 
-from evidence_engine import GEMINI_API_BASE, _sanitize_gemini_error, resolve_gemini_model
+from evidence_engine import (
+    AI_PROVIDER_CLAUDE,
+    AI_PROVIDER_GEMINI,
+    CLAUDE_MESSAGES_URL,
+    GEMINI_API_BASE,
+    claude_headers,
+    extract_json_object,
+    normalize_ai_provider,
+    resolve_claude_model,
+    resolve_gemini_model,
+)
 from semantic_relevance import _embed, _resolve_embed_model, cosine
 
 EMBED_TOP_K = 80          # embed the top-N lexical candidates for an intent-similarity score
@@ -35,7 +45,13 @@ def _paper_text(paper: dict[str, Any]) -> str:
     return f"{title}. {abstract}".strip()
 
 
-def _llm_rerank(intent_text: str, subset: list[dict[str, Any]], gemini_key: str) -> dict[int, float]:
+def _llm_rerank(
+    intent_text: str,
+    subset: list[dict[str, Any]],
+    ai_key: str,
+    ai_provider: str = AI_PROVIDER_GEMINI,
+    ai_model: str = "",
+) -> dict[int, float]:
     """Ask the model to rate each paper's fit to the intent (0-100). Returns
     {index: fit_0_to_1}. Empty dict on any failure."""
     items = [
@@ -70,29 +86,58 @@ def _llm_rerank(intent_text: str, subset: list[dict[str, Any]], gemini_key: str)
         "shares words like 'critical care', 'ICU', 'syndrome', or a coincidental "
         "acronym is NOT a match and should score low. Rate every id provided."
     )
-    body = {
-        "system_instruction": {"parts": [{"text": system}]},
-        "contents": [
-            {"parts": [{"text": f"Clinical intent:\n{intent_text}\n\nPapers (JSON):\n{json.dumps(items)}"}]}
-        ],
-        "generationConfig": {
-            "response_mime_type": "application/json",
-            "response_schema": schema,
-            "temperature": 0.0,
-        },
-    }
+    prompt = f"Clinical intent:\n{intent_text}\n\nPapers (JSON):\n{json.dumps(items)}"
     try:
-        model = resolve_gemini_model(gemini_key)
-        response = requests.post(
-            f"{GEMINI_API_BASE}/models/{model}:generateContent?key={gemini_key}",
-            json=body,
-            timeout=RERANK_TIMEOUT_S,
-        )
-        response.raise_for_status()
-        candidates = response.json().get("candidates") or []
-        parts = candidates[0].get("content", {}).get("parts") if candidates else []
-        raw = "".join(part.get("text", "") for part in parts or [] if isinstance(part, dict))
-        parsed = json.loads(raw)
+        active_provider = normalize_ai_provider(ai_provider, api_key=ai_key)
+        if active_provider == AI_PROVIDER_CLAUDE:
+            body = {
+                "model": resolve_claude_model(ai_key, preferred=ai_model),
+                "max_tokens": 2048,
+                "temperature": 0.0,
+                "system": (
+                    system
+                    + "\nReturn only valid JSON. Do not include Markdown fences or explanatory text. "
+                    + "The JSON object must match this schema:\n"
+                    + json.dumps(schema)
+                ),
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            response = requests.post(
+                CLAUDE_MESSAGES_URL,
+                headers=claude_headers(ai_key),
+                json=body,
+                timeout=RERANK_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            parts = payload.get("content") or []
+            raw = "".join(
+                str(part.get("text", ""))
+                for part in parts
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+            parsed = extract_json_object(raw)
+        else:
+            body = {
+                "system_instruction": {"parts": [{"text": system}]},
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "response_mime_type": "application/json",
+                    "response_schema": schema,
+                    "temperature": 0.0,
+                },
+            }
+            model = resolve_gemini_model(ai_key)
+            response = requests.post(
+                f"{GEMINI_API_BASE}/models/{model}:generateContent?key={ai_key}",
+                json=body,
+                timeout=RERANK_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            candidates = response.json().get("candidates") or []
+            parts = candidates[0].get("content", {}).get("parts") if candidates else []
+            raw = "".join(part.get("text", "") for part in parts or [] if isinstance(part, dict))
+            parsed = extract_json_object(raw)
     except Exception:
         return {}
 
@@ -110,7 +155,14 @@ def _llm_rerank(intent_text: str, subset: list[dict[str, Any]], gemini_key: str)
     return fits
 
 
-def rank_by_intent(intent_text: str, query: str, papers: list[dict[str, Any]], gemini_key: str) -> str:
+def rank_by_intent(
+    intent_text: str,
+    query: str,
+    papers: list[dict[str, Any]],
+    gemini_key: str = "",
+    ai_provider: str = AI_PROVIDER_GEMINI,
+    ai_model: str = "",
+) -> str:
     """Attach `intent_fit` (0-1) to top candidates. Returns "scored", "skipped",
     or "error". Never raises. Papers that were LLM-reranked also get
     `intent_reranked=True` so the caller can trust those scores for tier gating."""
@@ -119,6 +171,24 @@ def rank_by_intent(intent_text: str, query: str, papers: list[dict[str, Any]], g
         return "skipped"
     try:
         ranked = sorted(papers, key=lambda p: int(p.get("total_score", 0) or 0), reverse=True)
+        active_provider = normalize_ai_provider(ai_provider, api_key=gemini_key)
+        if active_provider == AI_PROVIDER_CLAUDE:
+            rerank_subset = ranked[:RERANK_TOP_K]
+            fits = _llm_rerank(
+                target,
+                rerank_subset,
+                gemini_key,
+                ai_provider=AI_PROVIDER_CLAUDE,
+                ai_model=ai_model,
+            )
+            if not fits:
+                return "error"
+            for idx, paper in enumerate(rerank_subset):
+                if idx in fits:
+                    paper["intent_fit"] = fits[idx]
+                    paper["intent_reranked"] = True
+            return "scored"
+
         embed_subset = ranked[:EMBED_TOP_K]
         model = _resolve_embed_model(gemini_key)
 

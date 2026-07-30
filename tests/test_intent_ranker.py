@@ -68,6 +68,24 @@ def test_llm_rerank_parses_ratings(monkeypatch) -> None:
     assert fits == {0: 0.8, 1: 0.1}    # id 9 is out of range -> dropped
 
 
+def test_claude_intent_rerank_skips_gemini_embeddings(monkeypatch) -> None:
+    payload = {"content": [{"type": "text", "text": '{"ratings":[{"id":0,"fit":95}]}' }]}
+
+    class _Resp:
+        def raise_for_status(self): return None
+        def json(self): return payload
+
+    monkeypatch.setattr(intent_ranker, "_resolve_embed_model", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no embeddings")))
+    monkeypatch.setattr(intent_ranker.requests, "post", lambda *a, **k: _Resp())
+
+    paper = {"title": "relevant", "abstract": "direct", "total_score": 90}
+    status = rank_by_intent("direct intent", "query", [paper], "sk-ant-test", ai_provider="claude")
+
+    assert status == "scored"
+    assert paper["intent_fit"] == 0.95
+    assert paper["intent_reranked"]
+
+
 def test_primer_exposes_clinical_intent() -> None:
     # The primer schema + prompt must request a clinical_intent for ranking.
     assert "clinical_intent" in topic_primer.GEMINI_RESPONSE_SCHEMA["properties"]

@@ -9,8 +9,10 @@ import evidence_engine
 import paper_finder
 import topic_primer
 from evidence_engine import (
+    CLAUDE_MESSAGES_URL,
     _expansion_trace_note,
     _sanitize_gemini_error,
+    call_ai_json,
     generate_ai_evidence_synthesis,
     resolve_gemini_model,
 )
@@ -38,6 +40,10 @@ class _FakeResp:
 
 def _gemini_text_payload(obj: dict) -> dict:
     return {"candidates": [{"content": {"parts": [{"text": json.dumps(obj)}]}}]}
+
+
+def _claude_text_payload(obj: dict) -> dict:
+    return {"content": [{"type": "text", "text": json.dumps(obj)}]}
 
 
 # --------------------------------------------------------------------------- #
@@ -141,6 +147,68 @@ def test_synthesis_sends_abstracts_to_the_model(monkeypatch) -> None:
     assert "UNIQUEABSTRACTTOKEN" in sent
 
 
+def test_claude_json_call_uses_messages_api_headers(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_post(url, headers=None, json=None, **kwargs):  # noqa: A002 - matches requests API
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["body"] = json
+        return _FakeResp(_claude_text_payload({"ok": True}))
+
+    monkeypatch.setattr(evidence_engine.requests, "post", fake_post)
+
+    out = call_ai_json(
+        system="Return JSON.",
+        prompt="hello",
+        schema={"type": "OBJECT"},
+        api_key="sk-ant-test",
+        provider="claude",
+        model="claude-test-model",
+    )
+
+    assert out == {"ok": True}
+    assert captured["url"] == CLAUDE_MESSAGES_URL
+    assert captured["headers"]["x-api-key"] == "sk-ant-test"
+    assert captured["headers"]["anthropic-version"] == "2023-06-01"
+    assert captured["body"]["model"] == "claude-test-model"
+    assert captured["body"]["messages"][0]["content"] == "hello"
+
+
+def test_synthesis_can_use_claude_provider(monkeypatch) -> None:
+    monkeypatch.setattr(
+        evidence_engine.requests,
+        "post",
+        lambda *a, **k: _FakeResp(
+            _claude_text_payload(
+                {
+                    "executive_summary": "Summary.",
+                    "themes": [
+                        {
+                            "theme": "Theme",
+                            "summary": "Grounded.",
+                            "source_ids": ["S1"],
+                            "strength_of_evidence": "moderate",
+                        }
+                    ],
+                    "agreements": [],
+                    "conflicts": [],
+                    "uncertainties": [],
+                }
+            )
+        ),
+    )
+
+    out = generate_ai_evidence_synthesis(
+        {"question": {}, "sources": [{"source_id": "S1", "title": "A"}]},
+        "sk-ant-test",
+        ai_provider="claude",
+    )
+
+    assert out["status"] == "generated"
+    assert "Claude synthesis" in out["note"]
+
+
 # --------------------------------------------------------------------------- #
 # Model discovery + error sanitizing
 # --------------------------------------------------------------------------- #
@@ -192,6 +260,5 @@ def test_expansion_trace_note_reports_off_states() -> None:
     assert "off (primer: unavailable)" in _expansion_trace_note(
         {"topic_primer_status": "unavailable", "layers": []}
     )
-
 
 

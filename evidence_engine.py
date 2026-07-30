@@ -89,6 +89,12 @@ HIGH_VALUE_DESIGNS = {
     "Landmark randomized trial",
     "Randomized controlled trial",
 }
+AI_PROVIDER_CLAUDE = "claude"
+AI_PROVIDER_GEMINI = "gemini"
+AI_PROVIDER_DEFAULT = AI_PROVIDER_CLAUDE
+CLAUDE_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_API_VERSION = "2023-06-01"
+CLAUDE_MODEL = "claude-sonnet-5"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 # Fallback model used only if live model discovery fails. Discovery is primary
 # because Google retires/renames Gemini models over time (a stale name 404s).
@@ -102,10 +108,48 @@ MODEL_DISCOVERY_TIMEOUT_S = 15
 _RESOLVED_GEMINI_MODEL: str | None = None
 
 
+def normalize_ai_provider(provider: str = "", api_key: str = "", gemini_key: str = "") -> str:
+    cleaned = re.sub(r"\s+", " ", provider or "").strip().lower()
+    if cleaned in {"claude", "anthropic"}:
+        return AI_PROVIDER_CLAUDE
+    if cleaned in {"gemini", "google", "google-gemini"}:
+        return AI_PROVIDER_GEMINI
+    if api_key and not gemini_key:
+        return AI_PROVIDER_CLAUDE
+    if gemini_key and not api_key:
+        return AI_PROVIDER_GEMINI
+    return AI_PROVIDER_DEFAULT
+
+
+def ai_provider_label(provider: str = "") -> str:
+    return "Claude" if normalize_ai_provider(provider) == AI_PROVIDER_CLAUDE else "Gemini"
+
+
+def _sanitize_ai_error(exc: Exception) -> str:
+    """Strip API keys from error text before it reaches the UI/logs."""
+    message = str(exc)
+    message = re.sub(r"key=[A-Za-z0-9_\-]+", "key=REDACTED", message)
+    message = re.sub(r"sk-ant-[A-Za-z0-9_\-]+", "sk-ant-REDACTED", message)
+    message = re.sub(r"AIza[A-Za-z0-9_\-]+", "AIzaREDACTED", message)
+    return message[:180]
+
+
 def _sanitize_gemini_error(exc: Exception) -> str:
     """Strip the API key from any error text before it reaches the UI/logs."""
-    message = re.sub(r"key=[A-Za-z0-9_\-]+", "key=REDACTED", str(exc))
-    return message[:160]
+    return _sanitize_ai_error(exc)[:160]
+
+
+def resolve_claude_model(claude_key: str = "", preferred: str = "") -> str:
+    """Return the Claude model id to use for direct Messages API calls."""
+    return preferred.strip() if preferred and preferred.strip() else CLAUDE_MODEL
+
+
+def claude_headers(claude_key: str) -> dict[str, str]:
+    return {
+        "content-type": "application/json",
+        "x-api-key": claude_key.strip(),
+        "anthropic-version": CLAUDE_API_VERSION,
+    }
 
 
 def _rank_gemini_model(name: str) -> tuple[int, str]:
@@ -158,10 +202,99 @@ def _gemini_generate_endpoint(gemini_key: str) -> str:
     return f"{GEMINI_API_BASE}/models/{resolve_gemini_model(gemini_key)}:generateContent"
 
 
+def extract_json_object(text: str) -> dict[str, Any]:
+    """Parse a JSON object, tolerating model replies that wrap it in prose."""
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("model returned empty content")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("model returned non-object JSON")
+    return parsed
+
+
+def _extract_claude_text(payload: dict[str, Any]) -> str:
+    parts = payload.get("content") or []
+    text_parts = [
+        str(part.get("text", ""))
+        for part in parts
+        if isinstance(part, dict) and part.get("type") == "text"
+    ]
+    return "".join(text_parts).strip()
+
+
+def call_ai_json(
+    *,
+    system: str,
+    prompt: str,
+    schema: dict[str, Any],
+    api_key: str,
+    provider: str = AI_PROVIDER_DEFAULT,
+    model: str = "",
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+    timeout: int = 50,
+) -> dict[str, Any]:
+    """Call Claude or Gemini and return a parsed JSON object."""
+    active_provider = normalize_ai_provider(provider, api_key=api_key)
+    if active_provider == AI_PROVIDER_CLAUDE:
+        body = {
+            "model": resolve_claude_model(api_key, preferred=model),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": (
+                system
+                + "\nReturn only valid JSON. Do not include Markdown fences or explanatory text. "
+                + "The JSON object must match this schema:\n"
+                + json.dumps(schema)
+            ),
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        response = requests.post(
+            CLAUDE_MESSAGES_URL,
+            headers=claude_headers(api_key),
+            json=body,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return extract_json_object(_extract_claude_text(response.json()))
+
+    body = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "response_schema": schema,
+            "temperature": temperature,
+        },
+    }
+    response = requests.post(
+        f"{_gemini_generate_endpoint(api_key)}?key={api_key}",
+        json=body,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    candidates = payload.get("candidates") or []
+    parts = candidates[0].get("content", {}).get("parts") if candidates else []
+    raw_text = "".join(part.get("text", "") for part in parts or [] if isinstance(part, dict))
+    return extract_json_object(raw_text)
+
+
 def build_evidence_review(
     result: dict[str, Any],
     max_sources: int = 80,
     gemini_key: str = "",
+    ai_key: str = "",
+    ai_provider: str = "",
+    ai_model: str = "",
     generate_ai_gaps: bool = False,
     generate_ai_synthesis: bool = False,
 ) -> dict[str, Any]:
@@ -210,10 +343,26 @@ def build_evidence_review(
         "sources": source_records,
         "license_notice": FEYNMAN_MIT_NOTICE,
     }
+    active_ai_key = ai_key or gemini_key
+    active_provider = normalize_ai_provider(
+        ai_provider,
+        api_key=ai_key,
+        gemini_key=gemini_key,
+    )
     if generate_ai_gaps:
-        report["ai_gap_synthesis"] = generate_ai_gap_synthesis(report, gemini_key)
+        report["ai_gap_synthesis"] = generate_ai_gap_synthesis(
+            report,
+            active_ai_key,
+            ai_provider=active_provider,
+            ai_model=ai_model,
+        )
     if generate_ai_synthesis:
-        report["ai_synthesis"] = generate_ai_evidence_synthesis(report, gemini_key)
+        report["ai_synthesis"] = generate_ai_evidence_synthesis(
+            report,
+            active_ai_key,
+            ai_provider=active_provider,
+            ai_model=ai_model,
+        )
     report["markdown"] = evidence_review_to_markdown(report)
     return report
 
@@ -369,17 +518,23 @@ def evidence_review_to_markdown(review: dict[str, Any]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def generate_ai_gap_synthesis(review: dict[str, Any], gemini_key: str) -> dict[str, Any]:
+def generate_ai_gap_synthesis(
+    review: dict[str, Any],
+    ai_key: str,
+    ai_provider: str = AI_PROVIDER_GEMINI,
+    ai_model: str = "",
+) -> dict[str, Any]:
     """Generate bounded, source-ID-based research-gap hypotheses.
 
     The LLM is allowed to synthesize only from source metadata already admitted
     by the deterministic pipeline. It cannot add papers or citations.
     """
-    if not gemini_key:
+    provider_label = ai_provider_label(ai_provider)
+    if not ai_key:
         return {
             "status": "not_configured",
             "items": [],
-            "note": "Add a Gemini API key to enable source-grounded AI gap hypotheses.",
+            "note": f"Add a {provider_label} API key to enable source-grounded AI gap hypotheses.",
         }
 
     sources = [
@@ -429,51 +584,35 @@ def generate_ai_gap_synthesis(review: dict[str, Any], gemini_key: str) -> dict[s
         "medical advice. Each gap must cite at least one provided source_id. "
         "Use confidence values: high, moderate, low, speculative."
     )
-    body = {
-        "system_instruction": {"parts": [{"text": system}]},
-        "contents": [
+    prompt = (
+        "Review question and source metadata:\n"
+        + _jsonish(
             {
-                "parts": [
-                    {
-                        "text": (
-                            "Review question and source metadata:\n"
-                            + _jsonish(
-                                {
-                                    "question": review.get("question", {}),
-                                    "evidence_hierarchy": review.get("evidence_hierarchy", []),
-                                    "deterministic_gaps": review.get("gaps", []),
-                                    "sources": sources,
-                                }
-                            )
-                        )
-                    }
-                ]
+                "question": review.get("question", {}),
+                "evidence_hierarchy": review.get("evidence_hierarchy", []),
+                "deterministic_gaps": review.get("gaps", []),
+                "sources": sources,
             }
-        ],
-        "generationConfig": {
-            "response_mime_type": "application/json",
-            "response_schema": schema,
-            "temperature": 0.15,
-        },
-    }
+        )
+    )
 
     try:
-        response = requests.post(
-            f"{_gemini_generate_endpoint(gemini_key)}?key={gemini_key}",
-            json=body,
+        parsed = call_ai_json(
+            system=system,
+            prompt=prompt,
+            schema=schema,
+            api_key=ai_key,
+            provider=ai_provider,
+            model=ai_model,
+            temperature=0.15,
+            max_tokens=2048,
             timeout=GAP_SYNTHESIS_TIMEOUT_S,
         )
-        response.raise_for_status()
-        payload = response.json()
-        candidates = payload.get("candidates") or []
-        parts = candidates[0].get("content", {}).get("parts") if candidates else []
-        raw_text = "".join(part.get("text", "") for part in parts or [] if isinstance(part, dict))
-        parsed = json.loads(raw_text)
     except Exception as exc:
         return {
             "status": "blocked",
             "items": [],
-            "note": f"AI gap synthesis could not be completed: {_sanitize_gemini_error(exc)}",
+            "note": f"{provider_label} gap synthesis could not be completed: {_sanitize_ai_error(exc)}",
         }
 
     valid_source_ids = {source["source_id"] for source in sources if source.get("source_id")}
@@ -506,11 +645,16 @@ def generate_ai_gap_synthesis(review: dict[str, Any], gemini_key: str) -> dict[s
     return {
         "status": "generated" if items else "blocked",
         "items": items,
-        "note": "AI gap hypotheses cite source IDs from the verified result set only.",
+        "note": f"{provider_label} gap hypotheses cite source IDs from the verified result set only.",
     }
 
 
-def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> dict[str, Any]:
+def generate_ai_evidence_synthesis(
+    review: dict[str, Any],
+    ai_key: str,
+    ai_provider: str = AI_PROVIDER_GEMINI,
+    ai_model: str = "",
+) -> dict[str, Any]:
     """Generate a grounded narrative synthesis of the retrieved literature.
 
     Adapts Feynman's writer + verifier agent integrity model: the LLM may only
@@ -519,7 +663,8 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
     Every claim must cite at least one verified source_id, disagreement is
     preserved, and inferences are labelled rather than stated as fact.
     """
-    if not gemini_key:
+    provider_label = ai_provider_label(ai_provider)
+    if not ai_key:
         return {
             "status": "not_configured",
             "executive_summary": "",
@@ -527,7 +672,7 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
             "agreements": [],
             "conflicts": [],
             "uncertainties": [],
-            "note": "Add a Gemini API key to enable source-grounded AI evidence synthesis.",
+            "note": f"Add a {provider_label} API key to enable source-grounded AI evidence synthesis.",
         }
 
     sources = [
@@ -639,47 +784,31 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
         "claim, omit it rather than guessing. This is research synthesis, not "
         "medical advice."
     ) + focus_instruction
-    body = {
-        "system_instruction": {"parts": [{"text": system}]},
-        "contents": [
+    prompt = (
+        "Review question and verified source metadata:\n"
+        + _jsonish(
             {
-                "parts": [
-                    {
-                        "text": (
-                            "Review question and verified source metadata:\n"
-                            + _jsonish(
-                                {
-                                    "question": review.get("question", {}),
-                                    "evidence_hierarchy": review.get("evidence_hierarchy", []),
-                                    "deterministic_gaps": review.get("gaps", []),
-                                    "limitations": review.get("limitations", []),
-                                    "sources": sources,
-                                }
-                            )
-                        )
-                    }
-                ]
+                "question": review.get("question", {}),
+                "evidence_hierarchy": review.get("evidence_hierarchy", []),
+                "deterministic_gaps": review.get("gaps", []),
+                "limitations": review.get("limitations", []),
+                "sources": sources,
             }
-        ],
-        "generationConfig": {
-            "response_mime_type": "application/json",
-            "response_schema": schema,
-            "temperature": 0.2,
-        },
-    }
+        )
+    )
 
     try:
-        response = requests.post(
-            f"{_gemini_generate_endpoint(gemini_key)}?key={gemini_key}",
-            json=body,
+        parsed = call_ai_json(
+            system=system,
+            prompt=prompt,
+            schema=schema,
+            api_key=ai_key,
+            provider=ai_provider,
+            model=ai_model,
+            temperature=0.2,
+            max_tokens=4096,
             timeout=EVIDENCE_SYNTHESIS_TIMEOUT_S,
         )
-        response.raise_for_status()
-        payload = response.json()
-        candidates = payload.get("candidates") or []
-        parts = candidates[0].get("content", {}).get("parts") if candidates else []
-        raw_text = "".join(part.get("text", "") for part in parts or [] if isinstance(part, dict))
-        parsed = json.loads(raw_text)
     except Exception as exc:
         return {
             "status": "blocked",
@@ -688,7 +817,7 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
             "agreements": [],
             "conflicts": [],
             "uncertainties": [],
-            "note": f"AI evidence synthesis could not be completed: {_sanitize_gemini_error(exc)}",
+            "note": f"{provider_label} evidence synthesis could not be completed: {_sanitize_ai_error(exc)}",
         }
 
     if not isinstance(parsed, dict):
@@ -757,7 +886,7 @@ def generate_ai_evidence_synthesis(review: dict[str, Any], gemini_key: str) -> d
         "conflicts": conflicts,
         "uncertainties": uncertainties,
         "note": (
-            "AI synthesis cites source IDs from the verified result set only. "
+            f"{provider_label} synthesis cites source IDs from the verified result set only. "
             "Research synthesis, not medical advice."
             + (
                 " Broad topic overview — agreement/conflict omitted (only meaningful "
