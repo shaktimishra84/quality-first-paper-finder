@@ -245,10 +245,12 @@ def call_ai_json(
     """Call Claude or Gemini and return a parsed JSON object."""
     active_provider = normalize_ai_provider(provider, api_key=api_key)
     if active_provider == AI_PROVIDER_CLAUDE:
+        # `temperature` is deliberately not sent: Claude Sonnet 5 / Opus 5
+        # reject non-default sampling parameters with a 400. It still applies
+        # to the Gemini branch below.
         body = {
             "model": resolve_claude_model(api_key, preferred=model),
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "system": (
                 system
                 + "\nReturn only valid JSON. Do not include Markdown fences or explanatory text. "

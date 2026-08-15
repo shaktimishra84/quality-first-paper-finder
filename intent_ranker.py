@@ -90,10 +90,11 @@ def _llm_rerank(
     try:
         active_provider = normalize_ai_provider(ai_provider, api_key=ai_key)
         if active_provider == AI_PROVIDER_CLAUDE:
+            # No temperature: Claude Sonnet 5 / Opus 5 reject non-default
+            # sampling parameters with a 400.
             body = {
                 "model": resolve_claude_model(ai_key, preferred=ai_model),
                 "max_tokens": 2048,
-                "temperature": 0.0,
                 "system": (
                     system
                     + "\nReturn only valid JSON. Do not include Markdown fences or explanatory text. "
